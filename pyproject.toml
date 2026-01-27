@@ -1,10 +1,13 @@
 [project]
 dependencies = [
+  "audioop-lts>=0.2.2",
+  "docling>=2.70.0",
   "kokoro-onnx>=0.4.9",
   "marker-pdf>=1.10.1",
   "ollama>=0.6.1",
   "onnxruntime>=1.23.2",
   "pydub>=0.25.1",
+  "rich>=14.3.1",
   "soundfile>=0.13.1",
 ]
 description = "Add your description here"

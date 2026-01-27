@@ -13,8 +13,8 @@ from pydub import AudioSegment
 # --- CONFIGURATION (Default Values) ---
 LLM_MODEL = "llama3"
 VOICE_NAME = "af_sky"
-KOKORO_MODEL = "kokoro-v0_19.onnx"
-VOICES_BIN = "voices.bin"
+KOKORO_MODEL = "models/kokoro-v1.0.onnx"
+VOICES_BIN = "models/voices-v1.0.bin"
 
 
 def extract_pdf(path):
@@ -94,5 +94,11 @@ if __name__ == "__main__":
 
     # Execute
     raw_content = extract_pdf(args.pdf_path)
-    clean_content = clean_text_with_llm(raw_content)
-    generate_tts(clean_content, args.output)
+
+    # Save raw content
+    os.makedirs("out", exist_ok=True)
+    with open("out/raw_content.txt", "w", encoding="utf-8") as f:
+        f.write(raw_content)
+    
+    # clean_content = clean_text_with_llm(raw_content)
+    # generate_tts(clean_content, args.output)
