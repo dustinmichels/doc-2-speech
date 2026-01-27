@@ -1,4 +1,6 @@
+import argparse
 import os
+import sys
 
 import ollama
 import soundfile as sf
@@ -8,17 +10,15 @@ from marker.models import create_model_dict
 from marker.output import text_from_rendered
 from pydub import AudioSegment
 
-# --- CONFIGURATION ---
-PDF_PATH = "your_book.pdf"
-OUTPUT_AUDIO = "output_audiobook.wav"
+# --- CONFIGURATION (Default Values) ---
 LLM_MODEL = "llama3"
-VOICE_NAME = "af_sky"  # Options: af_bella, af_sarah, am_adam, etc.
+VOICE_NAME = "af_sky"
 KOKORO_MODEL = "kokoro-v0_19.onnx"
 VOICES_BIN = "voices.bin"
 
 
 def extract_pdf(path):
-    print("Stage 1: Extracting text with Marker...")
+    print(f"Stage 1: Extracting text from {path} with Marker...")
     converter = PdfConverter(artifact_dict=create_model_dict())
     rendered = converter(path)
     text, _, _ = text_from_rendered(rendered)
@@ -27,7 +27,6 @@ def extract_pdf(path):
 
 def clean_text_with_llm(raw_text):
     print("Stage 2: Cleaning text with Ollama...")
-    # We process in chunks to stay within LLM context limits
     chunk_size = 2000
     cleaned_chunks = []
 
@@ -38,7 +37,7 @@ def clean_text_with_llm(raw_text):
             messages=[
                 {
                     "role": "system",
-                    "content": "You are a professional editor. Remove citations, page numbers, and image captions from the text. Join words split by hyphens. Do not change the story content.",
+                    "content": "You are a professional editor. Remove citations, page numbers, and image captions. Join words split by hyphens. Do not change the story content.",
                 },
                 {"role": "user", "content": f"Clean this for TTS: \n\n{chunk}"},
             ],
@@ -51,8 +50,6 @@ def clean_text_with_llm(raw_text):
 def generate_tts(text, output_file):
     print("Stage 3: Generating audio with Kokoro...")
     kokoro = Kokoro(KOKORO_MODEL, VOICES_BIN)
-
-    # Split text into sentences or small paragraphs for better processing
     sentences = text.split(". ")
     combined_audio = AudioSegment.empty()
 
@@ -60,12 +57,10 @@ def generate_tts(text, output_file):
         if not sentence.strip():
             continue
 
-        # Generate raw audio data
         samples, sample_rate = kokoro.create(
             sentence + ".", voice=VOICE_NAME, speed=1.0
         )
 
-        # Save temporary chunk and append to main file
         temp_chunk = f"temp_{i}.wav"
         sf.write(temp_chunk, samples, sample_rate)
         combined_audio += AudioSegment.from_wav(temp_chunk)
@@ -76,6 +71,28 @@ def generate_tts(text, output_file):
 
 
 if __name__ == "__main__":
-    raw_content = extract_pdf(PDF_PATH)
+    # Initialize Argument Parser
+    parser = argparse.ArgumentParser(
+        description="Convert a PDF to an audiobook using Marker, Ollama, and Kokoro."
+    )
+
+    # Add Arguments
+    parser.add_argument("pdf_path", help="Path to the input PDF file")
+    parser.add_argument(
+        "-o",
+        "--output",
+        default="output_audiobook.wav",
+        help="Output audio filename (default: output_audiobook.wav)",
+    )
+
+    args = parser.parse_args()
+
+    # Check if the file exists
+    if not os.path.exists(args.pdf_path):
+        print(f"Error: The file '{args.pdf_path}' does not exist.")
+        sys.exit(1)
+
+    # Execute
+    raw_content = extract_pdf(args.pdf_path)
     clean_content = clean_text_with_llm(raw_content)
-    generate_tts(clean_content, OUTPUT_AUDIO)
+    generate_tts(clean_content, args.output)
