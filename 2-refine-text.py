@@ -4,7 +4,7 @@ import sys
 import ollama
 
 # Configuration
-LLM_MODEL = "llama3"
+LLM_MODEL = "llama3.2:3b"
 
 
 def clean_text_with_llm(raw_text):
@@ -25,7 +25,7 @@ def clean_text_with_llm(raw_text):
                 messages=[
                     {
                         "role": "system",
-                        "content": "You are a professional editor. Remove citations, page numbers, and image captions. Join words split by hyphens. Do not change the story content.",
+                        "content": "You are a professional editor. Remove citations, page numbers, and image captions. Join words split by hyphens. Do not change the story content. Retain headers. Do not add any text.",
                     },
                     {"role": "user", "content": f"Clean this for TTS: \n\n{chunk}"},
                 ],
@@ -45,6 +45,7 @@ if __name__ == "__main__":
         "pdf_path",
         help="Path to the original PDF file (used to locate output directory)",
     )
+
     args = parser.parse_args()
 
     # Locate the output directory
