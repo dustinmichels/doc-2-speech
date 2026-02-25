@@ -1,12 +1,11 @@
 import os
 import re
-import tempfile
 
+import numpy as np
 import ollama
 import soundfile as sf
 from docling.document_converter import DocumentConverter
 from kokoro_onnx import Kokoro
-from pydub import AudioSegment
 
 LLM_MODEL = "llama3.2:3b"
 VOICE_NAME = "af_sky"
@@ -68,21 +67,19 @@ def text_to_speech(output_dir: str) -> str:
 
     kokoro = Kokoro(KOKORO_MODEL, VOICES_BIN)
     chunks = _split_text_smart(text)
-    combined = AudioSegment.empty()
+    all_samples = []
+    sample_rate = None
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        for i, chunk in enumerate(chunks):
-            if not chunk.strip():
-                continue
-            if not chunk.endswith((".", "!", "?", ";", ":")):
-                chunk += "."
-            samples, sample_rate = kokoro.create(chunk, voice=VOICE_NAME, speed=1.0)
-            tmp_wav = os.path.join(tmpdir, f"chunk_{i}.wav")
-            sf.write(tmp_wav, samples, sample_rate)
-            combined += AudioSegment.from_wav(tmp_wav)
+    for chunk in chunks:
+        if not chunk.strip():
+            continue
+        if not chunk.endswith((".", "!", "?", ";", ":")):
+            chunk += "."
+        samples, sample_rate = kokoro.create(chunk, voice=VOICE_NAME, speed=1.0)
+        all_samples.append(samples)
 
     out_path = os.path.join(output_dir, "audiobook.wav")
-    combined.export(out_path, format="wav")
+    sf.write(out_path, np.concatenate(all_samples), sample_rate)
     return out_path
 
 
