@@ -3,6 +3,7 @@ models/
 out/
 app/models/
 app/out/
+sample-pdfs/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

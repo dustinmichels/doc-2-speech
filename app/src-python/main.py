@@ -1,4 +1,5 @@
-import os
+import asyncio
+import json
 import re
 import shutil
 import uuid
@@ -11,7 +12,7 @@ from docling.document_converter import DocumentConverter
 import uvicorn
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from kokoro_onnx import Kokoro
 
 LLM_MODEL = "llama3.2:3b"
@@ -40,7 +41,10 @@ def _get_job_dir(job_id: str) -> Path:
 
 def _require_file(path: Path, label: str):
     if not path.exists():
-        raise HTTPException(status_code=404, detail=f"{label} not found at {path}. Run the previous stage first.")
+        raise HTTPException(
+            status_code=404,
+            detail=f"{label} not found at {path}. Run the previous stage first.",
+        )
 
 
 def _split_text_smart(text, max_len=400):
@@ -100,98 +104,156 @@ def _split_text_smart(text, max_len=400):
 # Stage 1 — Extract
 # ---------------------------------------------------------------------------
 
+
+def _sse(data: dict) -> str:
+    return f"data: {json.dumps(data)}\n\n"
+
+
 @app.post("/jobs/{job_id}/extract")
 async def extract(job_id: str, pdf: UploadFile = File(...)):
     """
     Upload a PDF and extract its text with Docling.
-    Returns the extracted text and its output path.
+    Streams SSE progress events, then a final 'done' event with results.
     """
-    job_dir = _get_job_dir(job_id)
 
-    # Save uploaded PDF to job dir
-    pdf_path = job_dir / pdf.filename
-    with open(pdf_path, "wb") as f:
-        shutil.copyfileobj(pdf.file, f)
+    async def event_stream():
+        job_dir = _get_job_dir(job_id)
 
-    converter = DocumentConverter()
-    result = converter.convert(str(pdf_path))
-    text = result.document.export_to_markdown()
+        yield _sse({"status": "saving", "message": "Saving PDF..."})
+        pdf_path = job_dir / pdf.filename
+        with open(pdf_path, "wb") as f:
+            shutil.copyfileobj(pdf.file, f)
 
-    out_path = job_dir / "extracted.txt"
-    out_path.write_text(text, encoding="utf-8")
+        yield _sse(
+            {
+                "status": "extracting",
+                "message": "Extracting text with Docling (this may take a while)...",
+            }
+        )
+        loop = asyncio.get_event_loop()
+        converter = DocumentConverter()
+        result = await loop.run_in_executor(None, converter.convert, str(pdf_path))
+        text = result.document.export_to_markdown()
 
-    return {
-        "job_id": job_id,
-        "stage": "extract",
-        "output_file": str(out_path),
-        "char_count": len(text),
-    }
+        yield _sse({"status": "writing", "message": "Writing output file..."})
+        out_path = job_dir / "extracted.txt"
+        out_path.write_text(text, encoding="utf-8")
+
+        yield _sse(
+            {
+                "status": "done",
+                "job_id": job_id,
+                "stage": "extract",
+                "output_file": str(out_path),
+                "char_count": len(text),
+            }
+        )
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 @app.post("/jobs/extract")
 async def extract_new_job(pdf: UploadFile = File(...)):
     """
     Convenience endpoint: creates a new job ID automatically, then runs extraction.
-    Returns the job_id for use in subsequent stages.
+    Streams the same SSE events as /jobs/{job_id}/extract.
     """
     job_id = str(uuid.uuid4())
-    return await extract(job_id, pdf)
+    response = await extract(job_id, pdf)
+    return response
 
 
 # ---------------------------------------------------------------------------
 # Stage 2 — Refine
 # ---------------------------------------------------------------------------
 
+
 @app.post("/jobs/{job_id}/refine")
-def refine(job_id: str):
+async def refine(job_id: str):
     """
     Clean the extracted text with Ollama LLM (removes citations, page numbers, etc.).
+    Streams SSE progress events with chunk counts, then a final 'done' event.
     Requires stage 1 to have been run first.
     """
-    job_dir = _get_job_dir(job_id)
-    in_path = job_dir / "extracted.txt"
-    _require_file(in_path, "extracted.txt")
 
-    raw = in_path.read_text(encoding="utf-8")
+    async def event_stream():
+        job_dir = _get_job_dir(job_id)
+        in_path = job_dir / "extracted.txt"
+        _require_file(in_path, "extracted.txt")
 
-    chunk_size = 2000
-    cleaned_chunks = []
-    for i in range(0, len(raw), chunk_size):
-        chunk = raw[i : i + chunk_size]
-        try:
-            response = ollama.chat(
-                model=LLM_MODEL,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "You are a professional editor. Remove citations, page numbers, "
-                            "and image captions. Join words split by hyphens. Do not change "
-                            "the content. Retain headers. Do not add any text."
-                        ),
-                    },
-                    {"role": "user", "content": f"Clean this for TTS: \n\n{chunk}"},
-                ],
+        raw = in_path.read_text(encoding="utf-8")
+
+        chunk_size = 2000
+        chunks = [raw[i : i + chunk_size] for i in range(0, len(raw), chunk_size)]
+        total = len(chunks)
+        cleaned_chunks = []
+
+        yield _sse(
+            {
+                "status": "refining",
+                "message": f"Refining {total} chunks...",
+                "total": total,
+                "completed": 0,
+            }
+        )
+
+        loop = asyncio.get_event_loop()
+
+        for idx, chunk in enumerate(chunks, start=1):
+
+            def call_ollama(c=chunk):
+                return ollama.chat(
+                    model=LLM_MODEL,
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": (
+                                "You are a professional editor. Remove citations, page numbers, "
+                                "and image captions. Join words split by hyphens. Do not change "
+                                "the content. Retain headers. Do not add any text."
+                            ),
+                        },
+                        {"role": "user", "content": f"Clean this for TTS: \n\n{c}"},
+                    ],
+                )
+
+            try:
+                response = await loop.run_in_executor(None, call_ollama)
+                cleaned_chunks.append(response["message"]["content"])
+            except Exception:
+                cleaned_chunks.append(chunk)
+
+            yield _sse(
+                {
+                    "status": "refining",
+                    "message": f"Refined chunk {idx}/{total}",
+                    "total": total,
+                    "completed": idx,
+                }
             )
-            cleaned_chunks.append(response["message"]["content"])
-        except Exception:
-            cleaned_chunks.append(chunk)
 
-    refined = " ".join(cleaned_chunks)
-    out_path = job_dir / "refined.txt"
-    out_path.write_text(refined, encoding="utf-8")
+        yield _sse({"status": "writing", "message": "Writing output file..."})
+        refined = " ".join(cleaned_chunks)
+        out_path = job_dir / "refined.txt"
+        out_path.write_text(refined, encoding="utf-8")
 
-    return {
-        "job_id": job_id,
-        "stage": "refine",
-        "output_file": str(out_path),
-        "char_count": len(refined),
-    }
+        yield _sse(
+            {
+                "status": "done",
+                "job_id": job_id,
+                "stage": "refine",
+                "output_file": str(out_path),
+                "char_count": len(refined),
+            }
+        )
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 # ---------------------------------------------------------------------------
 # Stage 3 — TTS
 # ---------------------------------------------------------------------------
+
 
 @app.post("/jobs/{job_id}/tts")
 def tts(job_id: str):
@@ -231,6 +293,7 @@ def tts(job_id: str):
 # ---------------------------------------------------------------------------
 # Utilities
 # ---------------------------------------------------------------------------
+
 
 @app.get("/jobs/{job_id}/audio")
 def download_audio(job_id: str):
