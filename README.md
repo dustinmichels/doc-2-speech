@@ -1,73 +1,69 @@
-# pdf-to-speech
+# PdfToSpeech app
 
-Convert a PDF into a spoken audio file using a three-stage pipeline:
+## Run the app
 
-1. **Extract** — Pull text from the PDF using [Docling](https://github.com/DS4SD/docling)
-2. **Refine** — Clean the text for TTS using a local LLM via [Ollama](https://ollama.com/) (removes citations, page numbers, image captions, etc.)
-3. **Synthesize** — Generate audio using [Kokoro](https://github.com/thewh1teagle/kokoro-onnx) (local, offline TTS)
+### uv
 
-Output is saved to `out/<pdf-name>/audiobook.wav`.
+Run as a desktop app:
 
-## Requirements
-
-- Python 3.13+
-- [uv](https://github.com/astral-sh/uv) for package management
-- [Ollama](https://ollama.com/) running locally with the `llama3.2:3b` model
-- Kokoro model files (see below)
-
-## Setup
-
-### 1. Install dependencies
-
-```sh
-uv sync
+```bash
+uv run flet run
 ```
 
-### 2. Download the Kokoro model files
+Run as a web app:
 
-```sh
-curl -L --create-dirs -o models/kokoro-v1.0.onnx \
-  https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx
-
-curl -L -o models/voices-v1.0.bin \
-  https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin
+```bash
+uv run flet run --web
 ```
 
-### 3. Pull the Ollama model
+For more details on running the app, refer to the [Getting Started Guide](https://docs.flet.dev/).
 
-```sh
-ollama pull llama3.2:3b
+## Build the app
+
+### Android
+
+```bash
+flet build apk -v
 ```
 
-## Usage
+For more details on building and signing `.apk` or `.aab`, refer to the [Android Packaging Guide](https://docs.flet.dev/publish/android/).
 
-### Run all stages at once
+### iOS
 
-```sh
-./run.zsh path/to/document.pdf
+```bash
+flet build ipa -v
 ```
 
-### Run stages individually
+For more details on building and signing `.ipa`, refer to the [iOS Packaging Guide](https://docs.flet.dev/publish/ios/).
 
-```sh
-# Stage 1: Extract text from PDF → out/<name>/extracted.txt
-uv run 1-extract-text.py path/to/document.pdf
+### macOS
 
-# Stage 2: Refine text for TTS → out/<name>/refined.txt
-uv run 2-refine-text.py path/to/document.pdf
-
-# Stage 3: Generate audio → out/<name>/audiobook.wav
-uv run 3-text-to-speech.py path/to/document.pdf
+```bash
+flet build macos -v
 ```
 
-Each script takes the original PDF path as its argument and uses the filename to locate the shared output directory (`out/<pdf-name>/`).
+For more details on building macOS package, refer to the [macOS Packaging Guide](https://docs.flet.dev/publish/macos/).
 
-## How it works
+### Linux
 
-| Stage | Script                | Input           | Output          | Tool                 |
-| ----- | --------------------- | --------------- | --------------- | -------------------- |
-| 1     | `1-extract-text.py`   | PDF file        | `extracted.txt` | Docling              |
-| 2     | `2-refine-text.py`    | `extracted.txt` | `refined.txt`   | Ollama (llama3.2:3b) |
-| 3     | `3-text-to-speech.py` | `refined.txt`   | `audiobook.wav` | Kokoro ONNX          |
+```bash
+flet build linux -v
+```
 
-Stage 2 processes the text in 2000-character chunks, sending each to the LLM with instructions to remove noise (citations, page numbers, figure captions) while preserving content and headers. Stage 3 splits the refined text into sentence-level chunks and stitches the audio together into a single WAV file.
+For more details on building Linux package, refer to the [Linux Packaging Guide](https://docs.flet.dev/publish/linux/).
+
+### Windows
+
+```bash
+flet build windows -v
+```
+
+For more details on building Windows package, refer to the [Windows Packaging Guide](https://docs.flet.dev/publish/windows/).
+
+### Web
+
+```bash
+flet build web -v
+```
+
+For more details on building Web app, refer to the [Web Packaging Guide](https://docs.flet.dev/publish/web/).

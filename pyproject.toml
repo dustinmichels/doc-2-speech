@@ -1,17 +1,28 @@
 [project]
-dependencies = [
-  "audioop-lts>=0.2.2",
-  "docling>=2.70.0",
-  "kokoro-onnx>=0.4.9",
-  "marker-pdf>=1.10.1",
-  "ollama>=0.6.1",
-  "onnxruntime>=1.23.2",
-  "pydub>=0.25.1",
-  "rich>=14.3.1",
-  "soundfile>=0.13.1",
-]
-description = "Add your description here"
 name = "pdf-to-speech"
-readme = "README.md"
-requires-python = ">=3.13"
 version = "0.1.0"
+description = ""
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+    { name = "Flet developer", email = "you@example.com" }
+]
+dependencies = [
+    "flet>=0.81.0"
+]
+
+[dependency-groups]
+dev = [
+    "flet-cli>=0.81.0",
+    "flet-desktop>=0.81.0",
+    "flet-web>=0.81.0",
+]
+
+[tool.flet]
+org = "com.mycompany"
+product = "pdf-to-speech"
+company = "Flet"
+copyright = "Copyright (C) 2023-2026 by Flet"
+
+[tool.flet.app]
+path = "src"
