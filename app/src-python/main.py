@@ -8,7 +8,9 @@ import numpy as np
 import ollama
 import soundfile as sf
 from docling.document_converter import DocumentConverter
+import uvicorn
 from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from kokoro_onnx import Kokoro
 
@@ -21,6 +23,13 @@ VOICES_BIN = PROJECT_ROOT / "models" / "voices-v1.0.bin"
 OUT_DIR = PROJECT_ROOT / "out"
 
 app = FastAPI(title="PDF-to-Speech API")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:1420", "tauri://localhost"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 def _get_job_dir(job_id: str) -> Path:
@@ -246,3 +255,7 @@ def job_status(job_id: str):
             "tts": (job_dir / "audiobook.wav").exists(),
         },
     }
+
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8000)

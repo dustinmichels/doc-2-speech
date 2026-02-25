@@ -1,6 +1,8 @@
 # Doc 2 Speech
 
-Backend
+```sh
+cd app && bun tauri dev
+```
 
 ```sh
 uv run uvicorn backend.main:app --reload
