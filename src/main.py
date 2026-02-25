@@ -21,27 +21,28 @@ def main(page: ft.Page):
 
     # --- File picker ---
     file_picker = ft.FilePicker()
-    page.overlay.append(file_picker)
+    page.services.append(file_picker)
     page.update()
 
     path_label = ft.Text("No document selected", color=ft.Colors.GREY_500, size=13)
 
-    def on_file_picked(e):
-        if e.files:
-            selected_path.current = e.files[0].path
+    async def pick_pdf_file(_):
+        files = await file_picker.pick_files(
+            allowed_extensions=["pdf"],
+            allow_multiple=False,
+            file_type=ft.FilePickerFileType.CUSTOM
+        )
+        if files:
+            selected_path.current = files[0].path
             path_label.value = os.path.basename(selected_path.current)
             path_label.color = ft.Colors.ON_SURFACE
             run_btn.disabled = False
-        page.update()
-
-    file_picker.on_result = on_file_picked
+            page.update()
 
     choose_btn = ft.OutlinedButton(
         "Choose a document",
         icon=ft.Icons.UPLOAD_FILE,
-        on_click=lambda _: file_picker.pick_files(
-            allowed_extensions=["pdf"], allow_multiple=False
-        ),
+        on_click=pick_pdf_file,
     )
 
     # --- Stage rows ---

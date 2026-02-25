@@ -4,7 +4,7 @@ version = "0.1.0"
 description = ""
 readme = "README.md"
 requires-python = ">=3.13"
-authors = [{ name = "Dustin Michels", email = "you@example.com" }]
+authors = [{ name = "Dustin Michels" }]
 dependencies = [
     "docling>=2.75.0",
     "flet>=0.81.0",
