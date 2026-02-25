@@ -1,0 +1,25 @@
+# Virtual environments
+.venv/
+
+# Python cache
+__pycache__/
+*.py[oc]
+
+# Build artifacts
+build/
+dist/
+wheels/
+*.egg-info/
+
+# Lock files (large, not useful for context)
+uv.lock
+
+# Output directories (generated content)
+out/
+models/
+
+# IDE/editor
+.vscode/
+
+# Git internals
+.git/

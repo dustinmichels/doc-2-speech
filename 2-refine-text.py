@@ -25,7 +25,7 @@ def clean_text_with_llm(raw_text):
                 messages=[
                     {
                         "role": "system",
-                        "content": "You are a professional editor. Remove citations, page numbers, and image captions. Join words split by hyphens. Do not change the story content. Retain headers. Do not add any text.",
+                        "content": "You are a professional editor. Remove citations, page numbers, and image captions. Join words split by hyphens. Do not change the content. Retain headers. Do not add any text.",
                     },
                     {"role": "user", "content": f"Clean this for TTS: \n\n{chunk}"},
                 ],
