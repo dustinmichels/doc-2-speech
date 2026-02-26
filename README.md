@@ -19,6 +19,9 @@ curl -X POST http://localhost:8000/jobs/test1/extract \
 
 # Stage 2 — Refine
 curl -X POST http://localhost:8000/jobs/test1/refine
+
+# Stage 3 — TTS
+curl -X POST http://localhost:8000/jobs/test1/tts
 ```
 
 ## More

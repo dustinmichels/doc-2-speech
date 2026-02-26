@@ -256,38 +256,104 @@ async def refine(job_id: str):
 
 
 @app.post("/jobs/{job_id}/tts")
-def tts(job_id: str):
+async def tts(job_id: str):
     """
     Generate an audiobook WAV from the refined text using Kokoro TTS.
+    Streams SSE progress events, then a final 'done' event with results.
     Requires stage 2 to have been run first.
     """
-    job_dir = _get_job_dir(job_id)
-    in_path = job_dir / "refined.txt"
-    _require_file(in_path, "refined.txt")
 
-    text = in_path.read_text(encoding="utf-8")
+    async def event_stream():
+        job_dir = _get_job_dir(job_id)
+        in_path = job_dir / "refined.txt"
 
-    kokoro = Kokoro(str(KOKORO_MODEL), str(VOICES_BIN))
-    chunks = _split_text_smart(text)
-    all_samples = []
-    sample_rate = None
+        if not in_path.exists():
+            yield _sse(
+                {
+                    "status": "error",
+                    "message": "refined.txt not found. Run the refine stage first.",
+                }
+            )
+            return
 
-    for chunk in chunks:
-        if not chunk.strip():
-            continue
-        if not chunk.endswith((".", "!", "?", ";", ":")):
-            chunk += "."
-        samples, sample_rate = kokoro.create(chunk, voice=VOICE_NAME, speed=1.0)
-        all_samples.append(samples)
+        try:
+            text = in_path.read_text(encoding="utf-8")
+            chunks = _split_text_smart(text)
+            total = len(chunks)
 
-    out_path = job_dir / "audiobook.wav"
-    sf.write(str(out_path), np.concatenate(all_samples), sample_rate)
+            yield _sse(
+                {"status": "loading_model", "message": "Loading Kokoro TTS model..."}
+            )
 
-    return {
-        "job_id": job_id,
-        "stage": "tts",
-        "output_file": str(out_path),
-    }
+            loop = asyncio.get_event_loop()
+            kokoro = await loop.run_in_executor(
+                None, lambda: Kokoro(str(KOKORO_MODEL), str(VOICES_BIN))
+            )
+
+            yield _sse(
+                {
+                    "status": "generating",
+                    "message": f"Generating audio for {total} chunks...",
+                    "total": total,
+                    "completed": 0,
+                }
+            )
+
+            all_samples = []
+            sample_rate = None
+
+            def process_chunk(chunk):
+                if not chunk.endswith((".", "!", "?", ";", ":")):
+                    chunk += "."
+                return kokoro.create(chunk, voice=VOICE_NAME, speed=1.0)
+
+            for idx, chunk in enumerate(chunks, start=1):
+                if not chunk.strip():
+                    continue
+                samples, sample_rate = await loop.run_in_executor(
+                    None, process_chunk, chunk
+                )
+                all_samples.append(samples)
+                yield _sse(
+                    {
+                        "status": "generating",
+                        "message": f"Chunk {idx}/{total}",
+                        "total": total,
+                        "completed": idx,
+                    }
+                )
+
+            if not all_samples:
+                yield _sse(
+                    {
+                        "status": "error",
+                        "message": "No audio generated — text may be empty.",
+                    }
+                )
+                return
+
+            yield _sse({"status": "writing", "message": "Writing audio file..."})
+            out_path = job_dir / "audiobook.wav"
+            await loop.run_in_executor(
+                None,
+                lambda: sf.write(
+                    str(out_path), np.concatenate(all_samples), sample_rate
+                ),
+            )
+
+            yield _sse(
+                {
+                    "status": "done",
+                    "job_id": job_id,
+                    "stage": "tts",
+                    "output_file": str(out_path),
+                }
+            )
+
+        except Exception as e:
+            yield _sse({"status": "error", "message": str(e)})
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 # ---------------------------------------------------------------------------
@@ -316,6 +382,67 @@ def job_status(job_id: str):
             "extract": (job_dir / "extracted.txt").exists(),
             "refine": (job_dir / "refined.txt").exists(),
             "tts": (job_dir / "audiobook.wav").exists(),
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# Health / dependency checks
+# ---------------------------------------------------------------------------
+
+
+@app.get("/health")
+async def health():
+    """Check that all required models and services are installed."""
+    # Check Kokoro model files
+    kokoro_model_ok = KOKORO_MODEL.exists()
+    voices_ok = VOICES_BIN.exists()
+    kokoro_ok = kokoro_model_ok and voices_ok
+    kokoro_detail = (
+        "Models found"
+        if kokoro_ok
+        else "; ".join(
+            filter(
+                None,
+                [
+                    f"Missing model file: {KOKORO_MODEL}"
+                    if not kokoro_model_ok
+                    else "",
+                    f"Missing voices file: {VOICES_BIN}" if not voices_ok else "",
+                ],
+            )
+        )
+    )
+
+    # Check Ollama + model availability
+    ollama_ok = False
+    ollama_detail = ""
+    try:
+        loop = asyncio.get_event_loop()
+        models_response = await loop.run_in_executor(None, ollama.list)
+        model_names = [m.model for m in models_response.models]
+        ollama_ok = any(LLM_MODEL in name for name in model_names)
+        if ollama_ok:
+            ollama_detail = f"Model '{LLM_MODEL}' found"
+        else:
+            ollama_detail = (
+                f"Model '{LLM_MODEL}' not found — run: ollama pull {LLM_MODEL}"
+            )
+    except Exception as e:
+        ollama_detail = f"Ollama not reachable: {e}"
+
+    return {
+        "ok": kokoro_ok and ollama_ok,
+        "kokoro": {
+            "ok": kokoro_ok,
+            "model_file": str(KOKORO_MODEL),
+            "voices_file": str(VOICES_BIN),
+            "detail": kokoro_detail,
+        },
+        "ollama": {
+            "ok": ollama_ok,
+            "model": LLM_MODEL,
+            "detail": ollama_detail,
         },
     }
 
