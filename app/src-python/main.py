@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import queue
 import re
 import shutil
@@ -15,18 +16,19 @@ from docling.datamodel.base_models import InputFormat
 from docling.datamodel.pipeline_options import PdfPipelineOptions
 from docling.document_converter import DocumentConverter, PdfFormatOption
 import uvicorn
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from kokoro_onnx import Kokoro
 
-LLM_MODEL = "llama3.2:3b"
 VOICE_NAME = "af_sky"
 
 PROJECT_ROOT = Path(__file__).parent.parent
 KOKORO_MODEL = PROJECT_ROOT / "models" / "kokoro-v1.0.onnx"
 VOICES_BIN = PROJECT_ROOT / "models" / "voices-v1.0.bin"
-OUT_DIR = PROJECT_ROOT / "out"
+
+DEFAULT_OUT_BASE = Path.home() / "MakeDocTalk" / "docs"
+DEFAULT_OUT_BASE.mkdir(parents=True, exist_ok=True)
 
 KOKORO_DOWNLOADS = [
     (
@@ -64,11 +66,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# In-memory job registry: job_id -> {"out_dir": Path, "doc_name": str}
+_jobs: dict[str, dict] = {}
+
 
 def _get_job_dir(job_id: str) -> Path:
-    d = OUT_DIR / job_id
+    if job_id in _jobs:
+        d = _jobs[job_id]["out_dir"]
+    else:
+        d = DEFAULT_OUT_BASE / job_id
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def _get_doc_name(job_id: str) -> str:
+    if job_id in _jobs:
+        return _jobs[job_id]["doc_name"]
+    return job_id
 
 
 def _require_file(path: Path, label: str):
@@ -150,9 +164,10 @@ async def extract(job_id: str, pdf: UploadFile = File(...)):
 
     async def event_stream():
         job_dir = _get_job_dir(job_id)
+        doc_name = _get_doc_name(job_id)
 
         yield _sse({"status": "saving", "message": "Saving PDF..."})
-        pdf_path = job_dir / pdf.filename
+        pdf_path = job_dir / f"{doc_name}.pdf"
         with open(pdf_path, "wb") as f:
             shutil.copyfileobj(pdf.file, f)
 
@@ -167,7 +182,7 @@ async def extract(job_id: str, pdf: UploadFile = File(...)):
         text = result.document.export_to_markdown()
 
         yield _sse({"status": "writing", "message": "Writing output file..."})
-        out_path = job_dir / "extracted.txt"
+        out_path = job_dir / f"{doc_name}_extracted.md"
         out_path.write_text(text, encoding="utf-8")
 
         yield _sse(
@@ -184,12 +199,26 @@ async def extract(job_id: str, pdf: UploadFile = File(...)):
 
 
 @app.post("/jobs/extract")
-async def extract_new_job(pdf: UploadFile = File(...)):
+async def extract_new_job(pdf: UploadFile = File(...), out_dir: str = Form("")):
     """
     Convenience endpoint: creates a new job ID automatically, then runs extraction.
+    Accepts an optional `out_dir` form field (absolute or ~/... path).
+    Defaults to ~/MakeDocTalk/docs/<pdf_stem>/.
     Streams the same SSE events as /jobs/{job_id}/extract.
     """
     job_id = str(uuid.uuid4())
+
+    pdf_stem = Path(pdf.filename).stem if pdf.filename else "document"
+
+    if out_dir and out_dir.strip():
+        job_out_dir = Path(out_dir.strip()).expanduser().resolve()
+    else:
+        job_out_dir = DEFAULT_OUT_BASE / pdf_stem
+
+    doc_name = job_out_dir.name
+
+    _jobs[job_id] = {"out_dir": job_out_dir, "doc_name": doc_name}
+
     response = await extract(job_id, pdf)
     return response
 
@@ -209,10 +238,17 @@ async def refine(job_id: str):
 
     async def event_stream():
         job_dir = _get_job_dir(job_id)
-        in_path = job_dir / "extracted.txt"
-        _require_file(in_path, "extracted.txt")
+        doc_name = _get_doc_name(job_id)
+        in_path = job_dir / f"{doc_name}_extracted.md"
+        _require_file(in_path, f"{doc_name}_extracted.md")
 
         raw = in_path.read_text(encoding="utf-8")
+
+        try:
+            llm_model = _pick_llm_model()
+        except RuntimeError as e:
+            yield _sse({"status": "error", "message": str(e)})
+            return
 
         chunks = _split_text_smart(raw, max_len=800)
         total = len(chunks)
@@ -231,9 +267,9 @@ async def refine(job_id: str):
 
         for idx, chunk in enumerate(chunks, start=1):
 
-            def call_ollama(c=chunk):
+            def call_ollama(c=chunk, m=llm_model):
                 return ollama.chat(
-                    model=LLM_MODEL,
+                    model=m,
                     messages=[
                         {
                             "role": "system",
@@ -264,7 +300,7 @@ async def refine(job_id: str):
 
         yield _sse({"status": "writing", "message": "Writing output file..."})
         refined = " ".join(cleaned_chunks)
-        out_path = job_dir / "refined.txt"
+        out_path = job_dir / f"{doc_name}_refined.txt"
         out_path.write_text(refined, encoding="utf-8")
 
         yield _sse(
@@ -295,13 +331,14 @@ async def tts(job_id: str):
 
     async def event_stream():
         job_dir = _get_job_dir(job_id)
-        in_path = job_dir / "refined.txt"
+        doc_name = _get_doc_name(job_id)
+        in_path = job_dir / f"{doc_name}_refined.txt"
 
         if not in_path.exists():
             yield _sse(
                 {
                     "status": "error",
-                    "message": "refined.txt not found. Run the refine stage first.",
+                    "message": f"{doc_name}_refined.txt not found. Run the refine stage first.",
                 }
             )
             return
@@ -363,7 +400,7 @@ async def tts(job_id: str):
                 return
 
             yield _sse({"status": "writing", "message": "Writing audio file..."})
-            out_path = job_dir / "audiobook.wav"
+            out_path = job_dir / f"{doc_name}_audio.wav"
             await loop.run_in_executor(
                 None,
                 lambda: sf.write(
@@ -393,25 +430,30 @@ async def tts(job_id: str):
 
 @app.get("/jobs/{job_id}/audio")
 def download_audio(job_id: str):
-    """Download the generated audiobook WAV for a job."""
-    wav_path = OUT_DIR / job_id / "audiobook.wav"
-    _require_file(wav_path, "audiobook.wav")
-    return FileResponse(str(wav_path), media_type="audio/wav", filename="audiobook.wav")
+    """Download the generated audio WAV for a job."""
+    job_dir = _get_job_dir(job_id)
+    doc_name = _get_doc_name(job_id)
+    wav_path = job_dir / f"{doc_name}_audio.wav"
+    _require_file(wav_path, f"{doc_name}_audio.wav")
+    return FileResponse(str(wav_path), media_type="audio/wav", filename=f"{doc_name}_audio.wav")
 
 
 @app.get("/jobs/{job_id}/status")
 def job_status(job_id: str):
     """Return which stages have been completed for a given job."""
-    job_dir = OUT_DIR / job_id
+    job_dir = _get_job_dir(job_id)
+    doc_name = _get_doc_name(job_id)
     if not job_dir.exists():
         raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found.")
 
     return {
         "job_id": job_id,
+        "doc_name": doc_name,
+        "out_dir": str(job_dir),
         "stages": {
-            "extract": (job_dir / "extracted.txt").exists(),
-            "refine": (job_dir / "refined.txt").exists(),
-            "tts": (job_dir / "audiobook.wav").exists(),
+            "extract": (job_dir / f"{doc_name}_extracted.md").exists(),
+            "refine": (job_dir / f"{doc_name}_refined.txt").exists(),
+            "tts": (job_dir / f"{doc_name}_audio.wav").exists(),
         },
     }
 
@@ -421,45 +463,92 @@ def job_status(job_id: str):
 # ---------------------------------------------------------------------------
 
 
-@app.get("/health")
-async def health():
-    """Check that all required models and services are installed."""
-    # Check Kokoro model files
-    kokoro_model_ok = KOKORO_MODEL.exists()
-    voices_ok = VOICES_BIN.exists()
-    kokoro_ok = kokoro_model_ok and voices_ok
+KNOWN_MODELS = [
+    "qwen3:0.6b",
+    "qwen3:1.7b",
+    "qwen3:4b",
+    "llama3.2:1b",
+    "llama3.2:3b",
+    "llama4:8b",
+    "gemma3:1b",
+    "gemma3:4b",
+    "gemma3:12b",
+    "phi3.5:latest",
+    "phi4:14b",
+    "phi4-mini-instruct",
+    "mistral:7b",
+    "mistral-small3.2:24b",
+    "smollm3:3b",
+    "liquid-lfm:1.2b",
+    "lfm2.5-thinking:1.2b",
+    "granite4:1b",
+    "granite4:3b",
+    "deepseek-v3.2-exp:7b",
+    "ministral-3:3b",
+    "ministral-3:8b",
+    "glm-4.7-flash",
+    "rnj-1:8b",
+]
 
-    # Check Ollama + model availability
-    ollama_ok = False
-    ollama_detail = ""
+
+def _pick_llm_model() -> str:
+    """Return the first installed KNOWN_MODELS entry, or raise RuntimeError."""
+    override = os.environ.get("LLM_MODEL")
+    if override:
+        return override
+    models_response = ollama.list()
+    installed_names = [m.model for m in models_response.models]
+    for candidate in KNOWN_MODELS:
+        if any(candidate in name for name in installed_names):
+            return candidate
+    raise RuntimeError(
+        "No supported Ollama model found. Pull one of: " + ", ".join(KNOWN_MODELS)
+    )
+
+
+@app.get("/health/ollama")
+async def health_ollama():
+    """Check Ollama connectivity and whether any supported model is available."""
     try:
         loop = asyncio.get_event_loop()
         models_response = await loop.run_in_executor(None, ollama.list)
-        model_names = [m.model for m in models_response.models]
-        ollama_ok = any(LLM_MODEL in name for name in model_names)
-        if ollama_ok:
-            ollama_detail = f"Model '{LLM_MODEL}' found"
+        installed_names = [m.model for m in models_response.models]
+        found = [m for m in KNOWN_MODELS if any(m in name for name in installed_names)]
+        if found:
+            return {"ok": True, "found_models": found, "detail": f"Found: {', '.join(found)}"}
         else:
-            ollama_detail = (
-                f"Model '{LLM_MODEL}' not found — run: ollama pull {LLM_MODEL}"
-            )
+            return {
+                "ok": False,
+                "found_models": [],
+                "detail": "No supported model found. Pull one of: " + ", ".join(KNOWN_MODELS),
+            }
     except Exception as e:
-        ollama_detail = f"Ollama not reachable: {e}"
+        return {"ok": False, "found_models": [], "detail": f"Ollama not reachable: {e}"}
 
+
+@app.get("/health/kokoro")
+async def health_kokoro():
+    """Check whether the required Kokoro TTS model files are present."""
+    kokoro_model_ok = KOKORO_MODEL.exists()
+    voices_ok = VOICES_BIN.exists()
     return {
-        "ok": kokoro_ok and ollama_ok,
-        "kokoro": {
-            "ok": kokoro_ok,
-            "files": {
-                "kokoro-v1.0.onnx": kokoro_model_ok,
-                "voices-v1.0.bin": voices_ok,
-            },
+        "ok": kokoro_model_ok and voices_ok,
+        "files": {
+            "kokoro-v1.0.onnx": kokoro_model_ok,
+            "voices-v1.0.bin": voices_ok,
         },
-        "ollama": {
-            "ok": ollama_ok,
-            "model": LLM_MODEL,
-            "detail": ollama_detail,
-        },
+    }
+
+
+@app.get("/health")
+async def health():
+    """Check that all required models and services are installed."""
+    ollama_data = await health_ollama()
+    kokoro_data = await health_kokoro()
+    return {
+        "ok": ollama_data["ok"] and kokoro_data["ok"],
+        "ollama": ollama_data,
+        "kokoro": kokoro_data,
     }
 
 
