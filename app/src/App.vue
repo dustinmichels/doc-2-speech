@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted } from "vue";
+import { ref, reactive, computed, watch, onMounted } from "vue";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 
 const BASE = "http://localhost:8000";
@@ -12,6 +12,36 @@ const health = reactive({
   kokoro: { status: "pending" as CheckStatus, detail: "" },
 });
 
+const kokoroFiles = reactive<Record<string, boolean>>({
+  "kokoro-v1.0.onnx": false,
+  "voices-v1.0.bin": false,
+});
+
+const kokoroFileList = computed(() => [
+  { name: "kokoro-v1.0.onnx", ok: kokoroFiles["kokoro-v1.0.onnx"] },
+  { name: "voices-v1.0.bin", ok: kokoroFiles["voices-v1.0.bin"] },
+]);
+
+const allRequirementsOk = computed(
+  () =>
+    !health.loading &&
+    health.ollama.status === "ok" &&
+    health.kokoro.status === "ok"
+);
+
+const requirementsExpanded = ref(true);
+
+watch(allRequirementsOk, (ok) => {
+  if (ok) requirementsExpanded.value = false;
+});
+
+function toggleRequirements() {
+  requirementsExpanded.value = !requirementsExpanded.value;
+}
+
+const kokoroCurrentFile = ref("");
+const kokoroCurrentPercent = ref(0);
+
 async function checkHealth() {
   health.loading = true;
   try {
@@ -20,12 +50,16 @@ async function checkHealth() {
     health.ollama.status = data.ollama.ok ? "ok" : "error";
     health.ollama.detail = data.ollama.detail;
     health.kokoro.status = data.kokoro.ok ? "ok" : "error";
-    health.kokoro.detail = data.kokoro.detail;
+    health.kokoro.detail = "";
+    if (data.kokoro.files) {
+      kokoroFiles["kokoro-v1.0.onnx"] = !!data.kokoro.files["kokoro-v1.0.onnx"];
+      kokoroFiles["voices-v1.0.bin"] = !!data.kokoro.files["voices-v1.0.bin"];
+    }
   } catch {
     health.ollama.status = "error";
     health.ollama.detail = "Cannot reach backend server";
     health.kokoro.status = "error";
-    health.kokoro.detail = "Cannot reach backend server";
+    health.kokoro.detail = "";
   } finally {
     health.loading = false;
   }
@@ -46,9 +80,43 @@ async function waitAndCheck() {
 
 onMounted(waitAndCheck);
 
+const downloadingKokoro = ref(false);
+
+async function downloadKokoro() {
+  downloadingKokoro.value = true;
+  kokoroCurrentFile.value = "";
+  kokoroCurrentPercent.value = 0;
+  let downloadError: string | null = null;
+
+  try {
+    const res = await fetch(`${BASE}/download-kokoro`, { method: "POST" });
+    if (!res.ok) throw new Error(`Download failed: ${res.statusText}`);
+    await consumeSSE(res, (event) => {
+      if (event.status === "downloading") {
+        kokoroCurrentFile.value = event.file ?? "";
+        kokoroCurrentPercent.value = event.percent ?? 0;
+      } else if (event.status === "file_done") {
+        kokoroFiles[event.file] = true;
+        kokoroCurrentFile.value = "";
+        kokoroCurrentPercent.value = 0;
+      } else if (event.status === "error") {
+        downloadError = event.message ?? "Download failed";
+      }
+    });
+    if (downloadError) throw new Error(downloadError);
+  } catch (err: any) {
+    health.kokoro.detail = err.message ?? "Download failed";
+  } finally {
+    downloadingKokoro.value = false;
+    kokoroCurrentFile.value = "";
+    await checkHealth();
+  }
+}
+
 const selectedFile = ref<File | null>(null);
 const jobId = ref<string | null>(null);
 const isConverting = ref(false);
+const abortController = ref<AbortController | null>(null);
 const outputPath = ref<string | null>(null);
 const errorMsg = ref<string | null>(null);
 const isPlaying = ref(false);
@@ -108,8 +176,15 @@ function openInFinder() {
   if (outputPath.value) revealItemInDir(outputPath.value);
 }
 
+function cancel() {
+  abortController.value?.abort();
+}
+
 async function convert() {
   if (!selectedFile.value) return;
+
+  abortController.value = new AbortController();
+  const signal = abortController.value.signal;
 
   isConverting.value = true;
   outputPath.value = null;
@@ -121,7 +196,7 @@ async function convert() {
     stages[0].status = "loading";
     const form = new FormData();
     form.append("pdf", selectedFile.value);
-    const res1 = await fetch(`${BASE}/jobs/extract`, { method: "POST", body: form });
+    const res1 = await fetch(`${BASE}/jobs/extract`, { method: "POST", body: form, signal });
     if (!res1.ok) throw new Error(`Extract failed: ${res1.statusText}`);
     const data1 = await consumeSSE(res1, (event) => {
       stages[0].detail = event.message ?? "";
@@ -132,32 +207,45 @@ async function convert() {
 
     // Stage 2: Refine
     stages[1].status = "loading";
-    const res2 = await fetch(`${BASE}/jobs/${jobId.value}/refine`, { method: "POST" });
+    const res2 = await fetch(`${BASE}/jobs/${jobId.value}/refine`, { method: "POST", signal });
     if (!res2.ok) throw new Error(`Refine failed: ${res2.statusText}`);
     await consumeSSE(res2, (event) => {
-      stages[1].detail = event.message ?? "";
+      if (event.total && event.completed != null) {
+        stages[1].detail = `${Math.round((event.completed / event.total) * 100)}%`;
+      } else {
+        stages[1].detail = event.message ?? "";
+      }
     });
     stages[1].status = "done";
     stages[1].detail = "";
 
     // Stage 3: TTS
     stages[2].status = "loading";
-    const res3 = await fetch(`${BASE}/jobs/${jobId.value}/tts`, { method: "POST" });
+    const res3 = await fetch(`${BASE}/jobs/${jobId.value}/tts`, { method: "POST", signal });
     if (!res3.ok) throw new Error(`TTS failed: ${res3.statusText}`);
     const data3 = await consumeSSE(res3, (event) => {
       if (event.status === "error") throw new Error(event.message ?? "TTS error");
-      stages[2].detail = event.message ?? "";
+      if (event.total && event.completed != null) {
+        stages[2].detail = `${Math.round((event.completed / event.total) * 100)}%`;
+      } else {
+        stages[2].detail = event.message ?? "";
+      }
     });
     if (data3?.status === "error") throw new Error(data3.message ?? "TTS error");
     stages[2].status = "done";
     stages[2].detail = "";
     outputPath.value = data3?.output_file;
   } catch (err: any) {
-    const failedIndex = stages.findIndex((s) => s.status === "loading");
-    if (failedIndex !== -1) stages[failedIndex].status = "error";
-    errorMsg.value = err.message ?? "An unknown error occurred.";
+    if (err.name === "AbortError") {
+      stages.forEach((s) => { if (s.status === "loading") s.status = "idle"; });
+    } else {
+      const failedIndex = stages.findIndex((s) => s.status === "loading");
+      if (failedIndex !== -1) stages[failedIndex].status = "error";
+      errorMsg.value = err.message ?? "An unknown error occurred.";
+    }
   } finally {
     isConverting.value = false;
+    abortController.value = null;
   }
 }
 </script>
@@ -167,34 +255,62 @@ async function convert() {
     <h1>PDF to Speech</h1>
 
     <div class="health-section">
-      <div class="health-header">
-        <span class="health-title">Requirements</span>
-        <button class="recheck-btn" :disabled="health.loading" @click="checkHealth">
+      <div class="health-header" @click="toggleRequirements">
+        <div class="health-header-left">
+          <span class="health-toggle-arrow" :class="{ expanded: requirementsExpanded }">▶</span>
+          <span class="health-title">Requirements</span>
+          <span v-if="!requirementsExpanded" class="health-icon">
+            <span v-if="health.loading" class="spinner"></span>
+            <span v-else-if="allRequirementsOk" class="icon-done">✓</span>
+            <span v-else class="icon-error">✗</span>
+          </span>
+        </div>
+        <button class="recheck-btn" :disabled="health.loading" @click.stop="checkHealth">
           {{ health.loading ? "Checking…" : "Re-check" }}
         </button>
       </div>
-      <div class="health-row">
-        <span class="health-icon">
-          <span v-if="health.loading" class="spinner"></span>
-          <span v-else-if="health.ollama.status === 'ok'" class="icon-done">✓</span>
-          <span v-else class="icon-error">✗</span>
-        </span>
-        <span class="health-label">
-          Ollama model
-          <span class="health-detail">{{ health.ollama.detail }}</span>
-        </span>
-      </div>
-      <div class="health-row">
-        <span class="health-icon">
-          <span v-if="health.loading" class="spinner"></span>
-          <span v-else-if="health.kokoro.status === 'ok'" class="icon-done">✓</span>
-          <span v-else class="icon-error">✗</span>
-        </span>
-        <span class="health-label">
-          Kokoro TTS models
-          <span class="health-detail">{{ health.kokoro.detail }}</span>
-        </span>
-      </div>
+      <template v-if="requirementsExpanded">
+        <div class="health-row">
+          <span class="health-icon">
+            <span v-if="health.loading" class="spinner"></span>
+            <span v-else-if="health.ollama.status === 'ok'" class="icon-done">✓</span>
+            <span v-else class="icon-error">✗</span>
+          </span>
+          <span class="health-label">
+            Ollama model
+            <span class="health-detail">{{ health.ollama.detail }}</span>
+          </span>
+        </div>
+        <div class="health-row">
+          <span class="health-icon">
+            <span v-if="health.loading || downloadingKokoro" class="spinner"></span>
+            <span v-else-if="health.kokoro.status === 'ok'" class="icon-done">✓</span>
+            <span v-else class="icon-error">✗</span>
+          </span>
+          <span class="health-label">Kokoro TTS models</span>
+          <button
+            v-if="health.kokoro.status === 'error' && !downloadingKokoro && !health.loading"
+            class="download-btn"
+            @click="downloadKokoro"
+          >
+            Download
+          </button>
+        </div>
+        <div v-if="health.kokoro.status === 'error' || downloadingKokoro" class="health-sublist">
+          <div v-for="file in kokoroFileList" :key="file.name" class="health-subrow">
+            <span class="health-icon">
+              <span v-if="file.ok" class="icon-done">✓</span>
+              <span v-else class="icon-error">✗</span>
+            </span>
+            <span class="health-sublabel">
+              {{ file.name }}
+              <span v-if="downloadingKokoro && kokoroCurrentFile === file.name" class="health-detail">
+                {{ kokoroCurrentPercent }}%
+              </span>
+            </span>
+          </div>
+        </div>
+      </template>
     </div>
 
     <div class="file-section">
@@ -205,13 +321,18 @@ async function convert() {
       <span v-if="selectedFile" class="filename">{{ selectedFile.name }}</span>
     </div>
 
-    <button
-      class="convert-btn"
-      :disabled="!selectedFile || isConverting || health.ollama.status !== 'ok' || health.kokoro.status !== 'ok'"
-      @click="convert"
-    >
-      Convert to Speech
-    </button>
+    <div class="convert-row">
+      <button
+        class="convert-btn"
+        :disabled="!selectedFile || isConverting || health.ollama.status !== 'ok' || health.kokoro.status !== 'ok'"
+        @click="convert"
+      >
+        Convert to Speech
+      </button>
+      <button v-if="isConverting" class="cancel-btn" @click="cancel">
+        Cancel
+      </button>
+    </div>
 
     <div v-if="stages.some((s) => s.status !== 'idle')" class="stages">
       <div v-for="stage in stages" :key="stage.label" class="stage-row">
@@ -326,6 +447,12 @@ h1 {
   max-width: 200px;
 }
 
+.convert-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
 .convert-btn {
   padding: 0.7em 1.4em;
   border-radius: 8px;
@@ -336,7 +463,23 @@ h1 {
   font-weight: 600;
   cursor: pointer;
   transition: opacity 0.2s;
-  align-self: flex-start;
+}
+
+.cancel-btn {
+  padding: 0.7em 1.4em;
+  border-radius: 8px;
+  border: 1px solid #ef4444;
+  background: transparent;
+  color: #ef4444;
+  font-size: 1em;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+}
+
+.cancel-btn:hover {
+  background: #ef4444;
+  color: #fff;
 }
 
 .convert-btn:disabled {
@@ -474,6 +617,26 @@ h1 {
   align-items: center;
   justify-content: space-between;
   margin-bottom: 0.25rem;
+  cursor: pointer;
+  user-select: none;
+}
+
+.health-header-left {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.health-toggle-arrow {
+  font-size: 0.65em;
+  color: #888;
+  display: inline-block;
+  transition: transform 0.2s ease;
+  line-height: 1;
+}
+
+.health-toggle-arrow.expanded {
+  transform: rotate(90deg);
 }
 
 .health-title {
@@ -524,5 +687,50 @@ h1 {
 .health-detail {
   font-size: 0.85em;
   color: #888;
+}
+
+.health-sublist {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding-left: 1.8rem;
+}
+
+.health-subrow {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.health-sublabel {
+  font-size: 0.85em;
+  color: #555;
+  display: flex;
+  gap: 0.3rem;
+  align-items: baseline;
+}
+
+@media (prefers-color-scheme: dark) {
+  .health-sublabel {
+    color: #aaa;
+  }
+}
+
+.download-btn {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 0.78em;
+  padding: 0.2em 0.7em;
+  border-radius: 4px;
+  border: 1px solid #396cd8;
+  background: transparent;
+  color: #396cd8;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.download-btn:hover {
+  background: #396cd8;
+  color: #fff;
 }
 </style>

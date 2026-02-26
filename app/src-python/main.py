@@ -1,14 +1,19 @@
 import asyncio
 import json
+import queue
 import re
 import shutil
+import threading
+import urllib.request
 import uuid
 from pathlib import Path
 
 import numpy as np
 import ollama
 import soundfile as sf
-from docling.document_converter import DocumentConverter
+from docling.datamodel.base_models import InputFormat
+from docling.datamodel.pipeline_options import PdfPipelineOptions
+from docling.document_converter import DocumentConverter, PdfFormatOption
 import uvicorn
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -22,6 +27,33 @@ PROJECT_ROOT = Path(__file__).parent.parent
 KOKORO_MODEL = PROJECT_ROOT / "models" / "kokoro-v1.0.onnx"
 VOICES_BIN = PROJECT_ROOT / "models" / "voices-v1.0.bin"
 OUT_DIR = PROJECT_ROOT / "out"
+
+KOKORO_DOWNLOADS = [
+    (
+        "kokoro-v1.0.onnx",
+        KOKORO_MODEL,
+        "https://github.com/nazdridoy/kokoro-tts/releases/download/v1.0.0/kokoro-v1.0.onnx",
+    ),
+    (
+        "voices-v1.0.bin",
+        VOICES_BIN,
+        "https://github.com/nazdridoy/kokoro-tts/releases/download/v1.0.0/voices-v1.0.bin",
+    ),
+]
+
+_pdf_pipeline_options = PdfPipelineOptions(
+    do_ocr=True,
+    do_table_structure=False,
+    do_code_enrichment=False,
+    do_formula_enrichment=False,
+    generate_page_images=False,
+    generate_picture_images=False,
+)
+_converter = DocumentConverter(
+    format_options={
+        InputFormat.PDF: PdfFormatOption(pipeline_options=_pdf_pipeline_options)
+    }
+)
 
 app = FastAPI(title="PDF-to-Speech API")
 
@@ -131,8 +163,7 @@ async def extract(job_id: str, pdf: UploadFile = File(...)):
             }
         )
         loop = asyncio.get_event_loop()
-        converter = DocumentConverter()
-        result = await loop.run_in_executor(None, converter.convert, str(pdf_path))
+        result = await loop.run_in_executor(None, _converter.convert, str(pdf_path))
         text = result.document.export_to_markdown()
 
         yield _sse({"status": "writing", "message": "Writing output file..."})
@@ -183,8 +214,7 @@ async def refine(job_id: str):
 
         raw = in_path.read_text(encoding="utf-8")
 
-        chunk_size = 2000
-        chunks = [raw[i : i + chunk_size] for i in range(0, len(raw), chunk_size)]
+        chunks = _split_text_smart(raw, max_len=800)
         total = len(chunks)
         cleaned_chunks = []
 
@@ -398,21 +428,6 @@ async def health():
     kokoro_model_ok = KOKORO_MODEL.exists()
     voices_ok = VOICES_BIN.exists()
     kokoro_ok = kokoro_model_ok and voices_ok
-    kokoro_detail = (
-        "Models found"
-        if kokoro_ok
-        else "; ".join(
-            filter(
-                None,
-                [
-                    f"Missing model file: {KOKORO_MODEL}"
-                    if not kokoro_model_ok
-                    else "",
-                    f"Missing voices file: {VOICES_BIN}" if not voices_ok else "",
-                ],
-            )
-        )
-    )
 
     # Check Ollama + model availability
     ollama_ok = False
@@ -435,9 +450,10 @@ async def health():
         "ok": kokoro_ok and ollama_ok,
         "kokoro": {
             "ok": kokoro_ok,
-            "model_file": str(KOKORO_MODEL),
-            "voices_file": str(VOICES_BIN),
-            "detail": kokoro_detail,
+            "files": {
+                "kokoro-v1.0.onnx": kokoro_model_ok,
+                "voices-v1.0.bin": voices_ok,
+            },
         },
         "ollama": {
             "ok": ollama_ok,
@@ -445,6 +461,66 @@ async def health():
             "detail": ollama_detail,
         },
     }
+
+
+@app.post("/download-kokoro")
+async def download_kokoro():
+    """Download missing Kokoro model files into the models/ directory. Streams SSE progress."""
+
+    async def event_stream():
+        needed = [(name, dest, url) for name, dest, url in KOKORO_DOWNLOADS if not dest.exists()]
+
+        if not needed:
+            yield _sse({"status": "done", "message": "All Kokoro files already present."})
+            return
+
+        KOKORO_MODEL.parent.mkdir(parents=True, exist_ok=True)
+
+        for filename, dest_path, url in needed:
+            yield _sse({"status": "downloading", "file": filename, "percent": 0})
+
+            q: queue.Queue = queue.Queue()
+
+            def do_download(url=url, dest=dest_path, fname=filename):
+                tmp = Path(str(dest) + ".tmp")
+                try:
+                    last_pct = [-1]
+
+                    def reporthook(block_num, block_size, total_size):
+                        if total_size > 0:
+                            pct = min(int(block_num * block_size * 100 / total_size), 100)
+                            if pct != last_pct[0]:
+                                last_pct[0] = pct
+                                q.put({"type": "progress", "file": fname, "percent": pct})
+
+                    urllib.request.urlretrieve(url, str(tmp), reporthook)
+                    tmp.rename(dest)
+                    q.put({"type": "done", "file": fname})
+                except Exception as e:
+                    if tmp.exists():
+                        tmp.unlink()
+                    q.put({"type": "error", "file": fname, "message": str(e)})
+
+            thread = threading.Thread(target=do_download, daemon=True)
+            thread.start()
+
+            while thread.is_alive() or not q.empty():
+                try:
+                    msg = q.get_nowait()
+                    if msg["type"] == "progress":
+                        yield _sse({"status": "downloading", "file": msg["file"], "percent": msg["percent"]})
+                    elif msg["type"] == "done":
+                        yield _sse({"status": "file_done", "file": msg["file"]})
+                        break
+                    elif msg["type"] == "error":
+                        yield _sse({"status": "error", "message": msg["message"]})
+                        return
+                except queue.Empty:
+                    await asyncio.sleep(0.1)
+
+        yield _sse({"status": "done", "message": "Kokoro models downloaded successfully."})
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 if __name__ == "__main__":

@@ -1,7 +1,9 @@
 import argparse
 import os
 import sys
-from docling.document_converter import DocumentConverter
+from docling.datamodel.base_models import InputFormat
+from docling.datamodel.pipeline_options import PdfPipelineOptions
+from docling.document_converter import DocumentConverter, PdfFormatOption
 from rich.console import Console
 from rich.panel import Panel
 
@@ -13,9 +15,18 @@ def extract_pdf(path):
         f"[bold blue]Stage 1:[/bold blue] Extracting text from [cyan]{path}[/cyan] with Docling..."
     )
 
-    # Initialize Docling converter
-    # This will automatically handle model downloads if needed on the first run
-    converter = DocumentConverter()
+    # Initialize Docling converter with TTS-optimized options
+    pdf_options = PdfPipelineOptions(
+        do_ocr=True,
+        do_table_structure=False,
+        do_code_enrichment=False,
+        do_formula_enrichment=False,
+        generate_page_images=False,
+        generate_picture_images=False,
+    )
+    converter = DocumentConverter(
+        format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=pdf_options)}
+    )
     result = converter.convert(path)
 
     # Export to markdown as it preserves structure better than plain text

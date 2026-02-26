@@ -41,3 +41,13 @@ bun run tauri android dev
 # For iOS development, run:
 bun run tauri ios dev
 ```
+
+## Install Kokoro TTS
+
+```sh
+# Download voice data (bin format is preferred)
+wget https://github.com/nazdridoy/kokoro-tts/releases/download/v1.0.0/voices-v1.0.bin
+
+# Download the model
+wget https://github.com/nazdridoy/kokoro-tts/releases/download/v1.0.0/kokoro-v1.0.onnx
+```
