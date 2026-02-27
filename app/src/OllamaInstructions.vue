@@ -86,31 +86,38 @@ async function recheck() {
 </script>
 
 <template>
-  <main class="container">
-    <button class="back-btn" @click="emit('back')">← Back</button>
+  <main class="max-w-[480px] mx-auto pt-[10vh] px-8 pb-8 flex flex-col gap-6">
+    <button
+      class="self-start px-[0.8em] py-[0.3em] rounded-md border border-gray-300 bg-transparent cursor-pointer text-[0.9em] text-inherit hover:border-primary hover:text-primary"
+      @click="emit('back')"
+    >← Back</button>
 
-    <h1>Ollama Setup</h1>
+    <h1 class="text-[1.8rem] font-semibold">Ollama Setup</h1>
 
-    <ol class="instructions">
+    <ol class="text-[0.95em] leading-[1.6] m-0 pl-5 flex flex-col gap-2">
       <li>
-        <a href="#" @click.prevent="goInstall">Install Ollama</a>
+        <a href="#" class="text-primary" @click.prevent="goInstall">Install Ollama</a>
       </li>
       <li>
         Once installed, choose a model and run the command in your terminal.
 
-        <div class="tier-tabs">
+        <div class="flex gap-2 mt-3">
           <button
             v-for="m in models"
             :key="m.tier"
-            class="tier-tab"
-            :class="{ active: !showMore && selectedTier === m.tier }"
+            class="px-[0.9em] py-[0.35em] rounded-md border text-[0.85em] cursor-pointer transition-all duration-150"
+            :class="!showMore && selectedTier === m.tier
+              ? 'border-primary bg-primary text-white'
+              : 'border-gray-300 bg-transparent text-inherit hover:border-primary hover:text-primary'"
             @click="showMore = false; selectedTier = m.tier"
           >
             {{ m.tier }}
           </button>
           <button
-            class="tier-tab"
-            :class="{ active: showMore }"
+            class="px-[0.9em] py-[0.35em] rounded-md border text-[0.85em] cursor-pointer transition-all duration-150"
+            :class="showMore
+              ? 'border-primary bg-primary text-white'
+              : 'border-gray-300 bg-transparent text-inherit hover:border-primary hover:text-primary'"
             @click="showMore = !showMore"
           >
             More
@@ -118,38 +125,41 @@ async function recheck() {
         </div>
 
         <template v-if="!showMore">
-          <div class="model-card">
-            <div class="model-meta">
-              <span class="model-name">{{ selectedModel.model_name }}</span>
-              <span class="model-badge">{{ selectedModel.size }}</span>
-              <span class="model-badge muted">{{ selectedModel.requirement }}</span>
+          <div class="mt-3 px-4 py-3 rounded-lg bg-black/[0.04] dark:bg-white/[0.06] flex flex-col gap-[0.4rem]">
+            <div class="flex items-center gap-2 flex-wrap">
+              <span class="font-mono text-[0.9em] font-semibold">{{ selectedModel.model_name }}</span>
+              <span class="text-[0.78em] px-[0.55em] py-[0.15em] rounded bg-primary/15 text-primary">{{ selectedModel.size }}</span>
+              <span class="text-[0.78em] px-[0.55em] py-[0.15em] rounded bg-black/[0.06] dark:bg-white/[0.08] opacity-70">{{ selectedModel.requirement }}</span>
             </div>
-            <p class="model-description">{{ selectedModel.description }}</p>
+            <p class="m-0 text-[0.85em] leading-[1.5] opacity-80">{{ selectedModel.description }}</p>
           </div>
 
-          <button class="code-block" @click="copyCommand">
+          <button
+            class="group flex items-center justify-between gap-3 mt-3 px-[1em] py-[0.6em] rounded-md bg-black/[0.06] dark:bg-white/[0.08] font-mono text-[0.9em] whitespace-pre w-full text-left border border-transparent cursor-pointer text-inherit transition-[border-color] duration-150 hover:border-primary"
+            @click="copyCommand"
+          >
             <span>ollama pull {{ selectedModel.model_name }}</span>
-            <span class="copy-icon">{{ copied ? "✓" : "⎘" }}</span>
+            <span class="opacity-50 shrink-0 transition-opacity duration-150 group-hover:opacity-100">{{ copied ? "✓" : "⎘" }}</span>
           </button>
         </template>
 
         <template v-else>
-          <p class="more-intro">There are other downloadable models you could try as well. For example:</p>
-          <ul class="more-models">
+          <p class="mt-3 mb-0 text-[0.85em] opacity-70 leading-[1.5]">There are other downloadable models you could try as well. For example:</p>
+          <ul class="mt-2 ml-4 pr-2 flex flex-col gap-1 text-[0.85em] max-h-[180px] overflow-y-auto list-none p-0">
             <li v-for="m in allModels" :key="m"><code>{{ m }}</code></li>
           </ul>
         </template>
       </li>
     </ol>
 
-    <div class="status-section">
-      <div class="status-row">
-        <span class="status-icon">
+    <div class="flex flex-col gap-3 p-4 rounded-lg bg-black/[0.04] dark:bg-white/[0.06]">
+      <div class="flex items-center gap-[0.6rem] text-[0.9em]">
+        <span class="w-[1.2em] flex items-center justify-center shrink-0">
           <span v-if="checking" class="spinner"></span>
           <span v-else-if="isInstalled" class="icon-done">✓</span>
           <span v-else class="icon-error">✗</span>
         </span>
-        <span class="status-text">
+        <span>
           <span v-if="checking">Checking…</span>
           <span v-else-if="isInstalled">
             Ready — found
@@ -160,294 +170,15 @@ async function recheck() {
           <span v-else>No supported model found. Pull one using the command above.</span>
         </span>
       </div>
-      <div class="status-actions">
-        <button class="recheck-btn" :disabled="checking" @click="recheck">
+      <div class="flex gap-3 items-center">
+        <button
+          class="px-[0.9em] py-[0.4em] rounded-md border border-gray-300 bg-transparent cursor-pointer text-[0.85em] text-inherit enabled:hover:border-primary enabled:hover:text-primary disabled:opacity-50 disabled:cursor-not-allowed"
+          :disabled="checking"
+          @click="recheck"
+        >
           {{ checking ? "Checking…" : "Re-check" }}
         </button>
       </div>
     </div>
   </main>
 </template>
-
-<style scoped>
-.container {
-  max-width: 480px;
-  margin: 0 auto;
-  padding: 10vh 2rem 2rem;
-  display: flex;
-  flex-direction: column;
-  gap: 1.5rem;
-}
-
-h1 {
-  font-size: 1.8rem;
-  font-weight: 600;
-}
-
-.back-btn {
-  align-self: flex-start;
-  padding: 0.3em 0.8em;
-  border-radius: 6px;
-  border: 1px solid #ccc;
-  background: transparent;
-  cursor: pointer;
-  font-size: 0.9em;
-  color: inherit;
-}
-
-.back-btn:hover {
-  border-color: #396cd8;
-  color: #396cd8;
-}
-
-.instructions {
-  font-size: 0.95em;
-  line-height: 1.6;
-  margin: 0;
-  padding-left: 1.2rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.code-block {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  margin-top: 0.75rem;
-  padding: 0.6em 1em;
-  border-radius: 6px;
-  background: rgba(0, 0, 0, 0.06);
-  font-family: monospace;
-  font-size: 0.9em;
-  white-space: pre;
-  width: 100%;
-  text-align: left;
-  border: 1px solid transparent;
-  cursor: pointer;
-  color: inherit;
-  transition: border-color 0.15s;
-}
-
-.code-block:hover {
-  border-color: #396cd8;
-}
-
-@media (prefers-color-scheme: dark) {
-  .code-block {
-    background: rgba(255, 255, 255, 0.08);
-  }
-}
-
-.copy-icon {
-  font-size: 1em;
-  opacity: 0.5;
-  flex-shrink: 0;
-  transition: opacity 0.15s;
-}
-
-.code-block:hover .copy-icon {
-  opacity: 1;
-}
-
-.status-section {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-  padding: 1rem;
-  border-radius: 8px;
-  background: rgba(0, 0, 0, 0.04);
-}
-
-@media (prefers-color-scheme: dark) {
-  .status-section {
-    background: rgba(255, 255, 255, 0.06);
-  }
-}
-
-.status-row {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  font-size: 0.9em;
-}
-
-.status-icon {
-  width: 1.2em;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
-.icon-done {
-  color: #22c55e;
-  font-weight: 700;
-}
-
-.icon-error {
-  color: #ef4444;
-  font-weight: 700;
-}
-
-.spinner {
-  display: inline-block;
-  width: 1em;
-  height: 1em;
-  border: 2px solid #396cd8;
-  border-top-color: transparent;
-  border-radius: 50%;
-  animation: spin 0.7s linear infinite;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-.status-actions {
-  display: flex;
-  gap: 0.75rem;
-  align-items: center;
-}
-
-.recheck-btn {
-  padding: 0.4em 0.9em;
-  border-radius: 6px;
-  border: 1px solid #ccc;
-  background: transparent;
-  cursor: pointer;
-  font-size: 0.85em;
-  color: inherit;
-}
-
-.recheck-btn:hover:not(:disabled) {
-  border-color: #396cd8;
-  color: #396cd8;
-}
-
-.recheck-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.install-btn {
-  padding: 0.4em 1em;
-  border-radius: 6px;
-  border: 1px solid transparent;
-  background-color: #396cd8;
-  color: #fff;
-  font-size: 0.85em;
-  font-weight: 600;
-  cursor: pointer;
-  transition: opacity 0.2s;
-}
-
-.install-btn:hover {
-  opacity: 0.85;
-}
-
-.tier-tabs {
-  display: flex;
-  gap: 0.5rem;
-  margin-top: 0.75rem;
-}
-
-.tier-tab {
-  padding: 0.35em 0.9em;
-  border-radius: 6px;
-  border: 1px solid #ccc;
-  background: transparent;
-  cursor: pointer;
-  font-size: 0.85em;
-  color: inherit;
-  transition: border-color 0.15s, background 0.15s, color 0.15s;
-}
-
-.tier-tab:hover {
-  border-color: #396cd8;
-  color: #396cd8;
-}
-
-.tier-tab.active {
-  border-color: #396cd8;
-  background: #396cd8;
-  color: #fff;
-}
-
-.model-card {
-  margin-top: 0.75rem;
-  padding: 0.75rem 1rem;
-  border-radius: 8px;
-  background: rgba(0, 0, 0, 0.04);
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-}
-
-@media (prefers-color-scheme: dark) {
-  .model-card {
-    background: rgba(255, 255, 255, 0.06);
-  }
-}
-
-.model-meta {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-}
-
-.model-name {
-  font-family: monospace;
-  font-size: 0.9em;
-  font-weight: 600;
-}
-
-.model-badge {
-  font-size: 0.78em;
-  padding: 0.15em 0.55em;
-  border-radius: 4px;
-  background: rgba(57, 108, 216, 0.15);
-  color: #396cd8;
-}
-
-.model-badge.muted {
-  background: rgba(0, 0, 0, 0.06);
-  color: inherit;
-  opacity: 0.7;
-}
-
-@media (prefers-color-scheme: dark) {
-  .model-badge.muted {
-    background: rgba(255, 255, 255, 0.08);
-  }
-}
-
-.model-description {
-  margin: 0;
-  font-size: 0.85em;
-  line-height: 1.5;
-  opacity: 0.8;
-}
-
-.more-intro {
-  margin: 0.75rem 0 0;
-  font-size: 0.85em;
-  opacity: 0.7;
-  line-height: 1.5;
-}
-
-.more-models {
-  margin: 0.5rem 0 0 1rem;
-  padding: 0 0.5rem 0 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-  font-size: 0.85em;
-  max-height: 180px;
-  overflow-y: auto;
-}
-</style>

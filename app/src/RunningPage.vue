@@ -117,37 +117,45 @@ onMounted(run);
 </script>
 
 <template>
-  <main class="container">
-    <h2>Converting</h2>
-    <p class="converting-filename">{{ file.name }}</p>
+  <main class="max-w-[480px] mx-auto pt-[10vh] px-8 pb-8 flex flex-col gap-6">
+    <h2 class="text-[1.4rem] font-semibold m-0">Converting</h2>
+    <p class="text-[0.9em] text-gray-500 m-0 break-all">{{ file.name }}</p>
 
-    <div class="stages">
-      <div v-for="stage in stages" :key="stage.label" class="stage-row">
-        <span class="stage-icon">
+    <div class="flex flex-col gap-[0.6rem]">
+      <div v-for="stage in stages" :key="stage.label" class="flex items-center gap-3">
+        <span class="w-[1.4em] flex items-center justify-center shrink-0">
           <span v-if="stage.status === 'idle'" class="icon-idle">○</span>
           <span v-else-if="stage.status === 'loading'" class="spinner"></span>
           <span v-else-if="stage.status === 'done'" class="icon-done">✓</span>
           <span v-else-if="stage.status === 'error'" class="icon-error">✗</span>
         </span>
-        <span class="stage-label">
+        <span class="text-[0.95em]">
           {{ stage.label }}
-          <span v-if="stage.detail && stage.status === 'loading'" class="stage-detail">
+          <span v-if="stage.detail && stage.status === 'loading'" class="text-[0.85em] text-gray-400">
             — {{ stage.detail }}
           </span>
         </span>
       </div>
     </div>
 
-    <p v-if="cancelled" class="cancelled-msg">Conversion cancelled.</p>
-    <p v-if="errorMsg" class="error-msg">{{ errorMsg }}</p>
+    <p v-if="cancelled" class="text-gray-400 text-[0.9em] m-0">Conversion cancelled.</p>
+    <p v-if="errorMsg" class="text-red-500 text-[0.9em] m-0">{{ errorMsg }}</p>
 
-    <div v-if="outputPath" class="output-section">
-      <p class="output-path">Output: <code>{{ outputPath }}</code></p>
-      <div class="output-actions">
-        <button class="action-btn" @click="togglePlay">
+    <div v-if="outputPath" class="flex flex-col gap-3">
+      <p class="text-[0.9em] break-all m-0">
+        Output: <code class="font-mono bg-black/[0.07] px-[0.3em] py-[0.1em] rounded">{{ outputPath }}</code>
+      </p>
+      <div class="flex gap-3">
+        <button
+          class="px-[1.2em] py-[0.6em] rounded-lg border border-transparent bg-white dark:bg-[#0f0f0f98] dark:text-white shadow-sm cursor-pointer text-[0.95em] font-medium transition-[border-color] duration-[0.25s] hover:border-primary"
+          @click="togglePlay"
+        >
           {{ isPlaying ? "⏸ Pause" : "▶ Play" }}
         </button>
-        <button class="action-btn" @click="openInFinder">Open in Finder</button>
+        <button
+          class="px-[1.2em] py-[0.6em] rounded-lg border border-transparent bg-white dark:bg-[#0f0f0f98] dark:text-white shadow-sm cursor-pointer text-[0.95em] font-medium transition-[border-color] duration-[0.25s] hover:border-primary"
+          @click="openInFinder"
+        >Open in Finder</button>
       </div>
       <audio
         ref="audioEl"
@@ -158,155 +166,21 @@ onMounted(run);
       ></audio>
     </div>
 
-    <div class="bottom-actions">
-      <button v-if="isConverting" class="cancel-btn" @click="cancel">
+    <div class="flex items-center gap-3 mt-2">
+      <button
+        v-if="isConverting"
+        class="px-[1.4em] py-[0.7em] rounded-lg border border-red-500 bg-transparent text-red-500 text-[1em] font-semibold cursor-pointer transition-colors duration-200 hover:bg-red-500 hover:text-white"
+        @click="cancel"
+      >
         Cancel
       </button>
-      <button v-if="!isConverting" class="back-btn" @click="emit('back')">
+      <button
+        v-if="!isConverting"
+        class="px-[1em] py-[0.5em] rounded-lg border border-gray-300 bg-transparent text-inherit text-[0.9em] cursor-pointer transition-colors duration-200 hover:border-primary hover:text-primary"
+        @click="emit('back')"
+      >
         ← Convert another file
       </button>
     </div>
   </main>
 </template>
-
-<style scoped>
-.converting-filename {
-  font-size: 0.9em;
-  color: #666;
-  margin: 0;
-  word-break: break-all;
-}
-
-h2 {
-  font-size: 1.4rem;
-  font-weight: 600;
-  margin: 0;
-}
-
-.stages {
-  display: flex;
-  flex-direction: column;
-  gap: 0.6rem;
-}
-
-.stage-row {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-}
-
-.stage-icon {
-  width: 1.4em;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.stage-label {
-  font-size: 0.95em;
-}
-
-.stage-detail {
-  font-size: 0.85em;
-  color: #888;
-}
-
-.cancelled-msg {
-  color: #888;
-  font-size: 0.9em;
-  margin: 0;
-}
-
-.error-msg {
-  color: #ef4444;
-  font-size: 0.9em;
-  margin: 0;
-}
-
-.output-section {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-}
-
-.output-path {
-  font-size: 0.9em;
-  word-break: break-all;
-  margin: 0;
-}
-
-.output-path code {
-  font-family: monospace;
-  background: rgba(0, 0, 0, 0.07);
-  padding: 0.1em 0.3em;
-  border-radius: 4px;
-}
-
-.output-actions {
-  display: flex;
-  gap: 0.75rem;
-}
-
-.action-btn {
-  padding: 0.6em 1.2em;
-  border-radius: 8px;
-  border: 1px solid transparent;
-  background-color: #ffffff;
-  box-shadow: 0 2px 2px rgba(0, 0, 0, 0.2);
-  cursor: pointer;
-  font-size: 0.95em;
-  font-weight: 500;
-  transition: border-color 0.25s;
-}
-
-.action-btn:hover {
-  border-color: #396cd8;
-}
-
-@media (prefers-color-scheme: dark) {
-  .action-btn {
-    color: #ffffff;
-    background-color: #0f0f0f98;
-  }
-}
-
-.bottom-actions {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  margin-top: 0.5rem;
-}
-
-.cancel-btn {
-  padding: 0.7em 1.4em;
-  border-radius: 8px;
-  border: 1px solid #ef4444;
-  background: transparent;
-  color: #ef4444;
-  font-size: 1em;
-  font-weight: 600;
-  cursor: pointer;
-  transition: background 0.2s, color 0.2s;
-}
-
-.cancel-btn:hover {
-  background: #ef4444;
-  color: #fff;
-}
-
-.back-btn {
-  padding: 0.5em 1em;
-  border-radius: 8px;
-  border: 1px solid #ccc;
-  background: transparent;
-  color: inherit;
-  font-size: 0.9em;
-  cursor: pointer;
-  transition: border-color 0.2s, color 0.2s;
-}
-
-.back-btn:hover {
-  border-color: #396cd8;
-  color: #396cd8;
-}
-</style>

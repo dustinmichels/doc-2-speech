@@ -1,5 +1,9 @@
 @import "tailwindcss";
 
+@theme {
+  --color-primary: #396cd8;
+}
+
 :root {
   font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
   font-size: 16px;
@@ -39,14 +43,3 @@
 .icon-idle { color: #999; }
 .icon-done { color: #22c55e; font-weight: 700; }
 .icon-error { color: #ef4444; font-weight: 700; }
-
-.container {
-  max-width: 480px;
-  margin: 0 auto;
-  padding: 10vh 2rem 2rem;
-  display: flex;
-  flex-direction: column;
-  gap: 1.5rem;
-}
-
-h1 { font-size: 1.8rem; font-weight: 600; }

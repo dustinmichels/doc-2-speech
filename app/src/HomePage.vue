@@ -2,7 +2,7 @@
 import { ref, reactive, computed, watch, onMounted } from "vue";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import OllamaInstructions from "./OllamaInstructions.vue";
-import { BASE, consumeSSE } from "./utils";
+import { BASE, setBase, consumeSSE } from "./utils";
 
 const emit = defineEmits<{ start: [file: File, outBaseDir: string, outName: string] }>();
 
@@ -46,6 +46,8 @@ function toggleRequirements() {
 const kokoroCurrentFile = ref("");
 const kokoroCurrentPercent = ref(0);
 
+import { Command } from "@tauri-apps/plugin-shell";
+
 async function checkHealth() {
   health.loading = true;
   try {
@@ -69,7 +71,33 @@ async function checkHealth() {
   }
 }
 
+let sidecarSpawned = false;
+
 async function waitAndCheck() {
+  if (!sidecarSpawned) {
+    try {
+      const command = Command.sidecar("binaries/main");
+
+      command.stdout.on("data", (line) => {
+        const match = line.match(/PORT_ALLOCATED=(\d+)/);
+        if (match) {
+          const port = match[1];
+          setBase(`http://localhost:${port}`);
+        }
+        console.log(`Sidecar: ${line}`);
+      });
+
+      command.stderr.on("data", (line) => {
+        console.error(`Sidecar Error: ${line}`);
+      });
+
+      await command.spawn();
+      sidecarSpawned = true;
+    } catch (e) {
+      console.error("Failed to spawn sidecar:", e);
+    }
+  }
+
   const maxAttempts = 30;
   for (let i = 0; i < maxAttempts; i++) {
     try {
@@ -151,67 +179,78 @@ function startConversion() {
     @back="showOllamaInstructions = false"
     @status-updated="(ok, detail) => { health.ollama.status = ok ? 'ok' : 'error'; health.ollama.detail = detail; }"
   />
-  <main v-else class="container">
-    <h1>PDF to Speech</h1>
+  <main v-else class="max-w-[480px] mx-auto pt-[10vh] px-8 pb-8 flex flex-col gap-6">
+    <h1 class="text-[1.8rem] font-semibold">PDF to Speech</h1>
 
-    <div class="health-section">
-      <div class="health-header" @click="toggleRequirements">
-        <div class="health-header-left">
-          <span class="health-toggle-arrow" :class="{ expanded: requirementsExpanded }">▶</span>
-          <span class="health-title">Requirements</span>
-          <span v-if="!requirementsExpanded" class="health-icon">
+    <!-- Requirements / Health Check -->
+    <div class="flex flex-col gap-2 py-[0.85rem] px-4 rounded-lg bg-black/[0.04] dark:bg-white/[0.06]">
+      <div class="flex items-center justify-between mb-1 cursor-pointer select-none" @click="toggleRequirements">
+        <div class="flex items-center gap-[0.4rem]">
+          <span
+            class="text-[0.65em] text-gray-400 inline-block transition-transform duration-200 leading-none"
+            :class="requirementsExpanded ? 'rotate-90' : ''"
+          >▶</span>
+          <span class="text-[0.8em] font-semibold uppercase tracking-[0.05em] text-gray-400">Requirements</span>
+          <span v-if="!requirementsExpanded" class="w-[1.2em] flex items-center justify-center shrink-0">
             <span v-if="health.loading" class="spinner"></span>
             <span v-else-if="allRequirementsOk" class="icon-done">✓</span>
             <span v-else class="icon-error">✗</span>
           </span>
         </div>
-        <button class="recheck-btn" :disabled="health.loading" @click.stop="checkHealth">
+        <button
+          class="text-[0.78em] px-[0.6em] py-[0.2em] rounded border border-gray-300 bg-transparent text-inherit cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+          :disabled="health.loading"
+          @click.stop="checkHealth"
+        >
           {{ health.loading ? "Checking…" : "Re-check" }}
         </button>
       </div>
+
       <template v-if="requirementsExpanded">
-        <div class="health-row">
-          <span class="health-icon">
+        <div class="flex items-baseline gap-[0.6rem]">
+          <span class="w-[1.2em] flex items-center justify-center shrink-0">
             <span v-if="health.loading" class="spinner"></span>
             <span v-else-if="health.ollama.status === 'ok'" class="icon-done">✓</span>
             <span v-else class="icon-error">✗</span>
           </span>
-          <span class="health-label">
+          <span class="text-[0.9em] flex flex-wrap gap-[0.3rem] items-baseline">
             Ollama model
-            <span class="health-detail">{{ health.ollama.detail }}</span>
+            <span class="text-[0.85em] text-gray-400">{{ health.ollama.detail }}</span>
           </span>
           <button
             v-if="health.ollama.status === 'error' && !health.loading"
-            class="download-btn"
+            class="ml-auto shrink-0 text-[0.78em] px-[0.7em] py-[0.2em] rounded border border-primary bg-transparent text-primary cursor-pointer whitespace-nowrap hover:bg-primary hover:text-white transition-colors duration-150"
             @click="showOllamaInstructions = true"
           >
             Install
           </button>
         </div>
-        <div class="health-row">
-          <span class="health-icon">
+
+        <div class="flex items-baseline gap-[0.6rem]">
+          <span class="w-[1.2em] flex items-center justify-center shrink-0">
             <span v-if="health.loading || downloadingKokoro" class="spinner"></span>
             <span v-else-if="health.kokoro.status === 'ok'" class="icon-done">✓</span>
             <span v-else class="icon-error">✗</span>
           </span>
-          <span class="health-label">Kokoro TTS models</span>
+          <span class="text-[0.9em]">Kokoro TTS models</span>
           <button
             v-if="health.kokoro.status === 'error' && !downloadingKokoro && !health.loading"
-            class="download-btn"
+            class="ml-auto shrink-0 text-[0.78em] px-[0.7em] py-[0.2em] rounded border border-primary bg-transparent text-primary cursor-pointer whitespace-nowrap hover:bg-primary hover:text-white transition-colors duration-150"
             @click="downloadKokoro"
           >
             Download
           </button>
         </div>
-        <div v-if="health.kokoro.status === 'error' || downloadingKokoro" class="health-sublist">
-          <div v-for="file in kokoroFileList" :key="file.name" class="health-subrow">
-            <span class="health-icon">
+
+        <div v-if="health.kokoro.status === 'error' || downloadingKokoro" class="flex flex-col gap-[0.3rem] pl-[1.8rem]">
+          <div v-for="file in kokoroFileList" :key="file.name" class="flex items-center gap-2">
+            <span class="w-[1.2em] flex items-center justify-center shrink-0">
               <span v-if="file.ok" class="icon-done">✓</span>
               <span v-else class="icon-error">✗</span>
             </span>
-            <span class="health-sublabel">
+            <span class="text-[0.85em] text-gray-500 dark:text-gray-400 flex gap-[0.3rem] items-baseline">
               {{ file.name }}
-              <span v-if="downloadingKokoro && kokoroCurrentFile === file.name" class="health-detail">
+              <span v-if="downloadingKokoro && kokoroCurrentFile === file.name" class="text-[0.85em] text-gray-400">
                 {{ kokoroCurrentPercent }}%
               </span>
             </span>
@@ -220,40 +259,49 @@ function startConversion() {
       </template>
     </div>
 
-    <div class="file-section">
-      <label class="file-btn" :class="{ disabled: !allRequirementsOk }">
+    <!-- File Selection -->
+    <div class="flex items-center gap-4">
+      <label
+        class="inline-block px-[1.2em] py-[0.6em] rounded-lg border border-transparent bg-white dark:bg-[#0f0f0f98] dark:text-white shadow-sm text-[1em] font-medium transition-[border-color] duration-[0.25s]"
+        :class="allRequirementsOk ? 'cursor-pointer hover:border-primary' : 'opacity-45 cursor-not-allowed'"
+      >
         Select Document
         <input type="file" accept=".pdf" :disabled="!allRequirementsOk" @change="onFileChange" hidden />
       </label>
-      <span v-if="selectedFile" class="filename">{{ selectedFile.name }}</span>
+      <span v-if="selectedFile" class="text-[0.9em] text-gray-500 truncate max-w-[200px]">{{ selectedFile.name }}</span>
     </div>
 
-    <div v-if="selectedFile" class="outdir-section">
-      <div class="outdir-field">
-        <label class="outdir-label">Output folder</label>
-        <div class="outdir-input-row">
+    <!-- Output Directory -->
+    <div v-if="selectedFile" class="flex flex-col gap-2">
+      <div class="flex flex-col gap-[0.2rem]">
+        <label class="text-[0.75em] font-semibold uppercase tracking-[0.05em] text-gray-400">Output folder</label>
+        <div class="flex gap-[0.4rem]">
           <input
             :value="outBaseDir"
-            class="outdir-input outdir-input--readonly"
+            class="w-full px-[0.7em] py-[0.45em] rounded-md border border-gray-300 dark:border-gray-600 text-[0.88em] font-mono bg-transparent text-inherit min-w-0 focus:outline-none opacity-55 cursor-default select-none"
             type="text"
             placeholder="~/MakeDocTalk/docs"
             readonly
           />
-          <button class="browse-btn" @click="browseFolder">Open</button>
+          <button
+            class="shrink-0 px-[0.8em] py-[0.45em] rounded-md border border-gray-300 bg-transparent text-inherit text-[0.88em] cursor-pointer whitespace-nowrap hover:border-primary hover:text-primary"
+            @click="browseFolder"
+          >Open</button>
         </div>
       </div>
       <input
         v-model="outName"
-        class="outdir-input"
+        class="w-full px-[0.7em] py-[0.45em] rounded-md border border-gray-300 dark:border-gray-600 text-[0.88em] font-mono bg-transparent text-inherit min-w-0 focus:outline-none focus:border-primary"
         type="text"
         placeholder="my-document"
       />
-      <span class="outdir-preview">→ {{ outBaseDir }}/{{ outName }}</span>
+      <span class="text-[0.8em] font-mono text-gray-400 break-all">→ {{ outBaseDir }}/{{ outName }}</span>
     </div>
 
-    <div class="convert-row">
+    <!-- Convert Button -->
+    <div class="flex items-center gap-3">
       <button
-        class="convert-btn"
+        class="px-[1.4em] py-[0.7em] rounded-lg border border-transparent bg-primary text-white text-[1em] font-semibold cursor-pointer transition-opacity duration-200 disabled:opacity-45 disabled:cursor-not-allowed enabled:hover:opacity-85"
         :disabled="!selectedFile || !allRequirementsOk"
         @click="startConversion"
       >
@@ -262,298 +310,3 @@ function startConversion() {
     </div>
   </main>
 </template>
-
-<style scoped>
-.file-section {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-}
-
-.file-btn {
-  display: inline-block;
-  padding: 0.6em 1.2em;
-  border-radius: 8px;
-  border: 1px solid transparent;
-  background-color: #ffffff;
-  box-shadow: 0 2px 2px rgba(0, 0, 0, 0.2);
-  cursor: pointer;
-  font-size: 1em;
-  font-weight: 500;
-  transition: border-color 0.25s;
-}
-
-.file-btn:hover:not(.disabled) {
-  border-color: #396cd8;
-}
-
-.file-btn.disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-
-.filename {
-  font-size: 0.9em;
-  color: #666;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 200px;
-}
-
-.outdir-section {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.outdir-field {
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-}
-
-.outdir-label {
-  font-size: 0.75em;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: #888;
-}
-
-.outdir-input-row {
-  display: flex;
-  gap: 0.4rem;
-}
-
-.outdir-input {
-  width: 100%;
-  padding: 0.45em 0.7em;
-  border-radius: 6px;
-  border: 1px solid #ccc;
-  font-size: 0.88em;
-  font-family: monospace;
-  background: transparent;
-  color: inherit;
-  box-sizing: border-box;
-  min-width: 0;
-}
-
-.outdir-input:focus {
-  outline: none;
-  border-color: #396cd8;
-}
-
-.outdir-input:disabled {
-  opacity: 0.5;
-}
-
-.outdir-input--readonly {
-  opacity: 0.55;
-  cursor: default;
-  user-select: none;
-}
-
-.outdir-input--readonly:focus {
-  border-color: #ccc;
-}
-
-@media (prefers-color-scheme: dark) {
-  .outdir-input {
-    border-color: #555;
-  }
-}
-
-.browse-btn {
-  flex-shrink: 0;
-  padding: 0.45em 0.8em;
-  border-radius: 6px;
-  border: 1px solid #ccc;
-  background: transparent;
-  color: inherit;
-  font-size: 0.88em;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.browse-btn:hover:not(:disabled) {
-  border-color: #396cd8;
-  color: #396cd8;
-}
-
-.browse-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.outdir-preview {
-  font-size: 0.8em;
-  font-family: monospace;
-  color: #888;
-  word-break: break-all;
-}
-
-.convert-row {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-}
-
-.convert-btn {
-  padding: 0.7em 1.4em;
-  border-radius: 8px;
-  border: 1px solid transparent;
-  background-color: #396cd8;
-  color: #fff;
-  font-size: 1em;
-  font-weight: 600;
-  cursor: pointer;
-  transition: opacity 0.2s;
-}
-
-.convert-btn:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-
-.convert-btn:not(:disabled):hover {
-  opacity: 0.85;
-}
-
-.health-section {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  padding: 0.85rem 1rem;
-  border-radius: 8px;
-  background: rgba(0, 0, 0, 0.04);
-}
-
-@media (prefers-color-scheme: dark) {
-  .health-section {
-    background: rgba(255, 255, 255, 0.06);
-  }
-}
-
-.health-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 0.25rem;
-  cursor: pointer;
-  user-select: none;
-}
-
-.health-header-left {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-}
-
-.health-toggle-arrow {
-  font-size: 0.65em;
-  color: #888;
-  display: inline-block;
-  transition: transform 0.2s ease;
-  line-height: 1;
-}
-
-.health-toggle-arrow.expanded {
-  transform: rotate(90deg);
-}
-
-.health-title {
-  font-size: 0.8em;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: #888;
-}
-
-.recheck-btn {
-  font-size: 0.78em;
-  padding: 0.2em 0.6em;
-  border-radius: 4px;
-  border: 1px solid #ccc;
-  background: transparent;
-  cursor: pointer;
-  color: inherit;
-}
-
-.recheck-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.health-row {
-  display: flex;
-  align-items: baseline;
-  gap: 0.6rem;
-}
-
-.health-icon {
-  width: 1.2em;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
-.health-label {
-  font-size: 0.9em;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.3rem;
-  align-items: baseline;
-}
-
-.health-detail {
-  font-size: 0.85em;
-  color: #888;
-}
-
-.health-sublist {
-  display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-  padding-left: 1.8rem;
-}
-
-.health-subrow {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.health-sublabel {
-  font-size: 0.85em;
-  color: #555;
-  display: flex;
-  gap: 0.3rem;
-  align-items: baseline;
-}
-
-@media (prefers-color-scheme: dark) {
-  .health-sublabel {
-    color: #aaa;
-  }
-}
-
-.download-btn {
-  margin-left: auto;
-  flex-shrink: 0;
-  font-size: 0.78em;
-  padding: 0.2em 0.7em;
-  border-radius: 4px;
-  border: 1px solid #396cd8;
-  background: transparent;
-  color: #396cd8;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.download-btn:hover {
-  background: #396cd8;
-  color: #fff;
-}
-</style>

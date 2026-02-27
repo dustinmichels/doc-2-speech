@@ -1,4 +1,9 @@
-export const BASE = "http://localhost:8000";
+export let BASE: string = "http://localhost:8000";
+
+export function setBase(newBase: string) {
+  BASE = newBase;
+}
+
 
 /** Read a POST SSE stream, calling onEvent for each parsed event. Returns the last event. */
 export async function consumeSSE(response: Response, onEvent: (data: any) => void): Promise<any> {
