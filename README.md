@@ -1,4 +1,4 @@
-# Doc 2 Speech
+# TalkThatDoc
 
 ```sh
 cd app && bun tauri dev
@@ -10,18 +10,18 @@ uv run uvicorn backend.main:app --reload
 
 ## Development
 
-| Command | Description |
-|---------|-------------|
-| `cd app && bun run dev:all` | Run Vite dev server + Python backend together |
+| Command                      | Description                                         |
+| ---------------------------- | --------------------------------------------------- |
+| `cd app && bun run dev:all`  | Run Vite dev server + Python backend together       |
 | `cd app && bun run dev:test` | Same, but injects a fake LLM model name for testing |
-| `cd app && bun tauri dev` | Full Tauri desktop app (uses `beforeDevCommand`) |
+| `cd app && bun tauri dev`    | Full Tauri desktop app (uses `beforeDevCommand`)    |
 
 ## Environment Variables
 
 The Python backend reads the following environment variables at startup. Copy `.env.template` to `.env` and fill in values as needed.
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable    | Default           | Description                                                                                                                                                                                                                                                                   |
+| ----------- | ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `LLM_MODEL` | _(auto-detected)_ | Override the Ollama model used for text refinement. If unset, the backend scans installed Ollama models and picks the first match from its known-models list. Set to a fake name (e.g. `llama3.2:3b-fake-for-testing`) to force an error and confirm the override path works. |
 
 ### Inline override (no .env file needed)

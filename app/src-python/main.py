@@ -435,7 +435,9 @@ def download_audio(job_id: str):
     doc_name = _get_doc_name(job_id)
     wav_path = job_dir / f"{doc_name}_audio.wav"
     _require_file(wav_path, f"{doc_name}_audio.wav")
-    return FileResponse(str(wav_path), media_type="audio/wav", filename=f"{doc_name}_audio.wav")
+    return FileResponse(
+        str(wav_path), media_type="audio/wav", filename=f"{doc_name}_audio.wav"
+    )
 
 
 @app.get("/jobs/{job_id}/status")
@@ -515,12 +517,17 @@ async def health_ollama():
         installed_names = [m.model for m in models_response.models]
         found = [m for m in KNOWN_MODELS if any(m in name for name in installed_names)]
         if found:
-            return {"ok": True, "found_models": found, "detail": f"Found: {', '.join(found)}"}
+            return {
+                "ok": True,
+                "found_models": found,
+                "detail": f"Found: {', '.join(found)}",
+            }
         else:
             return {
                 "ok": False,
                 "found_models": [],
-                "detail": "No supported model found. Pull one of: " + ", ".join(KNOWN_MODELS),
+                "detail": "No supported model found. Pull one of: "
+                + ", ".join(KNOWN_MODELS),
             }
     except Exception as e:
         return {"ok": False, "found_models": [], "detail": f"Ollama not reachable: {e}"}
@@ -557,10 +564,16 @@ async def download_kokoro():
     """Download missing Kokoro model files into the models/ directory. Streams SSE progress."""
 
     async def event_stream():
-        needed = [(name, dest, url) for name, dest, url in KOKORO_DOWNLOADS if not dest.exists()]
+        needed = [
+            (name, dest, url)
+            for name, dest, url in KOKORO_DOWNLOADS
+            if not dest.exists()
+        ]
 
         if not needed:
-            yield _sse({"status": "done", "message": "All Kokoro files already present."})
+            yield _sse(
+                {"status": "done", "message": "All Kokoro files already present."}
+            )
             return
 
         KOKORO_MODEL.parent.mkdir(parents=True, exist_ok=True)
@@ -577,10 +590,14 @@ async def download_kokoro():
 
                     def reporthook(block_num, block_size, total_size):
                         if total_size > 0:
-                            pct = min(int(block_num * block_size * 100 / total_size), 100)
+                            pct = min(
+                                int(block_num * block_size * 100 / total_size), 100
+                            )
                             if pct != last_pct[0]:
                                 last_pct[0] = pct
-                                q.put({"type": "progress", "file": fname, "percent": pct})
+                                q.put(
+                                    {"type": "progress", "file": fname, "percent": pct}
+                                )
 
                     urllib.request.urlretrieve(url, str(tmp), reporthook)
                     tmp.rename(dest)
@@ -597,7 +614,13 @@ async def download_kokoro():
                 try:
                     msg = q.get_nowait()
                     if msg["type"] == "progress":
-                        yield _sse({"status": "downloading", "file": msg["file"], "percent": msg["percent"]})
+                        yield _sse(
+                            {
+                                "status": "downloading",
+                                "file": msg["file"],
+                                "percent": msg["percent"],
+                            }
+                        )
                     elif msg["type"] == "done":
                         yield _sse({"status": "file_done", "file": msg["file"]})
                         break
@@ -607,7 +630,9 @@ async def download_kokoro():
                 except queue.Empty:
                     await asyncio.sleep(0.1)
 
-        yield _sse({"status": "done", "message": "Kokoro models downloaded successfully."})
+        yield _sse(
+            {"status": "done", "message": "Kokoro models downloaded successfully."}
+        )
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, watch, onMounted } from "vue";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { homeDir, join } from "@tauri-apps/api/path";
 import OllamaInstructions from "./OllamaInstructions.vue";
 import { BASE, setBase, consumeSSE } from "./utils";
 
@@ -149,11 +150,11 @@ const selectedFile = ref<File | null>(null);
 const outBaseDir = ref<string>("");
 const outName = ref<string>("");
 
-function onFileChange(event: Event) {
+async function onFileChange(event: Event) {
   const input = event.target as HTMLInputElement;
   selectedFile.value = input.files?.[0] ?? null;
   if (selectedFile.value) {
-    outBaseDir.value = "~/MakeDocTalk/docs";
+    outBaseDir.value = await join(await homeDir(), "MakeDocTalk", "docs");
     outName.value = selectedFile.value.name.replace(/\.pdf$/i, "");
   } else {
     outBaseDir.value = "";
@@ -280,7 +281,7 @@ function startConversion() {
             :value="outBaseDir"
             class="w-full px-[0.7em] py-[0.45em] rounded-md border border-gray-300 dark:border-gray-600 text-[0.88em] font-mono bg-transparent text-inherit min-w-0 focus:outline-none opacity-55 cursor-default select-none"
             type="text"
-            placeholder="~/MakeDocTalk/docs"
+            placeholder="/Users/you/MakeDocTalk/docs"
             readonly
           />
           <button
